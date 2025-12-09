@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>GoPieNg - IPAM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css"/>
+  <script type="module" src="/ui/assets/app.js"></script>
+</head>
+<body class="not-authed">
+  <div class="app">
+    <header class="app-header">
+      <div class="logo">&gt; ipam</div>
+      <nav>
+        <a href="#" class="active" data-page="browse">Browse</a>
+        <a href="#" data-page="logs">Logs</a>
+        <a href="#" data-page="users" class="admin-only">Users</a>
+      </nav>
+      <div class="header-right">
+        <div class="status" id="apiStatus"><span class="status-dot"></span><span id="apiStatusText">…</span></div>
+        <span id="userBadge" class="user-badge">not signed in</span>
+        <button id="logoutBtn" class="logout-btn" title="Sign out">logout</button>
+        <button class="theme-toggle" id="themeToggle" title="Toggle theme"></button>
+      </div>
+    </header>
+    <main id="app" class="page active"></main>
+  </div>
+  <div id="toastRoot" class="toast-root"></div>
+</body>
+</html>
