@@ -15,9 +15,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/yellowman/gopieng/internal/auth"
-	"github.com/yellowman/gopineg/internal/db"
-	"github.com/yellwoman/gopieng/internal/middleware"
+	"github.com/yellowman/GoPieNg/internal/auth"
+	"github.com/yellowman/GoPieNg/internal/db"
+	"github.com/yellowman/GoPieNg/internal/middleware"
 )
 
 var (
