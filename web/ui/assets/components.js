@@ -91,22 +91,18 @@ function TreeNode(net, depth){
     style: `padding-left: ${depth * 20 + 8}px`
   })
   
-  // Expand/collapse or leaf indicator
-  if (isSubdivide) {
-    const toggle = el('button', { class: 'tree-toggle' }, isExpanded ? '▼' : '▶')
-    toggle.onclick = async (e) => {
-      e.stopPropagation()
-      if (expanded.has(net.id)) {
-        expanded.delete(net.id)
-      } else {
-        expanded.add(net.id)
-      }
-      store.set({}) // Re-render
+  // Expand/collapse toggle - works for both subdivide and leaf networks
+  const toggle = el('button', { class: 'tree-toggle' }, isExpanded ? '▼' : '▶')
+  toggle.onclick = async (e) => {
+    e.stopPropagation()
+    if (expanded.has(net.id)) {
+      expanded.delete(net.id)
+    } else {
+      expanded.add(net.id)
     }
-    row.appendChild(toggle)
-  } else {
-    row.appendChild(el('span', { class: 'tree-toggle leaf-dot' }, '•'))
+    store.set({}) // Re-render
   }
+  row.appendChild(toggle)
   
   // CIDR
   row.appendChild(el('span', { class: 'tree-cidr' }, net.address_range || '?'))
@@ -227,22 +223,28 @@ function TreeNode(net, depth){
         expanded.delete(net.id)
       } else {
         expanded.add(net.id)
+        // Scroll into view after render
+        setTimeout(() => {
+          wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }, 50)
       }
       store.set({})
     }
     actions.appendChild(openBtn)
   } else {
-    const hostsBtn = el('button', { class: 'btn-action btn-hosts' }, 'hosts')
+    const hostsBtn = el('button', { class: 'btn-action btn-hosts' }, isExpanded ? 'close' : 'hosts')
     hostsBtn.onclick = (e) => {
       e.stopPropagation()
-      const panel = wrapper.querySelector('.host-panel')
-      if (panel) {
-        const wasHidden = panel.classList.contains('hidden')
-        panel.classList.toggle('hidden')
-        if (wasHidden && !panel.dataset.loaded) {
-          loadHostPanel(panel, net)
-        }
+      if (expanded.has(net.id)) {
+        expanded.delete(net.id)
+      } else {
+        expanded.add(net.id)
+        // Scroll into view after render
+        setTimeout(() => {
+          wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }, 50)
       }
+      store.set({})
     }
     actions.appendChild(hostsBtn)
   }
@@ -260,8 +262,11 @@ function TreeNode(net, depth){
     
     wrapper.appendChild(children)
   } else {
-    // Host panel for leaf networks
-    const panel = el('div', { class: 'host-panel hidden' })
+    // Host panel for leaf networks - use expanded state
+    const panel = el('div', { class: 'host-panel' + (isExpanded ? '' : ' hidden') })
+    if (isExpanded) {
+      loadHostPanel(panel, net)
+    }
     wrapper.appendChild(panel)
   }
   

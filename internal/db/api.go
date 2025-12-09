@@ -416,6 +416,11 @@ func API(db *sql.DB, jwt any, pingCheck bool) http.Handler {
 			return 
 		}
 		if _, err := db.Exec(`INSERT INTO hosts(address,network,description) VALUES($1::inet,$2,$3)`, a, id, desc); err != nil { 
+			// Check if it's a duplicate key error (race condition - another user allocated it first)
+			if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
+				http.Error(w, "address already allocated, please retry", 409)
+				return
+			}
 			http.Error(w, err.Error(), 500)
 			return 
 		}
@@ -502,6 +507,11 @@ func API(db *sql.DB, jwt any, pingCheck bool) http.Handler {
 		
 		var nid int64
 		if err := db.QueryRow(`INSERT INTO networks(parent,address_range,description,subdivide) VALUES($1,$2::cidr,$3,$4) RETURNING id`, id, cand, desc, req.Subdivide).Scan(&nid); err != nil { 
+			// Check if it's a duplicate key error (race condition - another user allocated it first)
+			if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
+				http.Error(w, "subnet already allocated, please retry", 409)
+				return
+			}
 			http.Error(w, err.Error(), 500)
 			return 
 		}

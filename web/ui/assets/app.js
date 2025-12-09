@@ -54,39 +54,78 @@ mountApp(root)
     })
   }
   
-  // API status ping
-  async function ping() {
-    const token = localStorage.getItem('pieng_token') || ''
-    if (!token) {
-      const s = document.getElementById('apiStatus')
-      const t = document.getElementById('apiStatusText')
-      if (s && t) { 
-        s.className = 'status' 
-        t.textContent = '—' 
+  // Network health monitoring - ping every 5 seconds
+  let networkOk = true
+  async function checkNetwork() {
+    const banner = document.getElementById('networkBanner')
+    try {
+      const r = await fetch('/api/pieng/ping', { 
+        method: 'GET',
+        cache: 'no-store'
+      })
+      if (r.ok) {
+        if (!networkOk) {
+          networkOk = true
+          if (banner) banner.classList.add('hidden')
+          // Refresh data when network comes back
+          if (store.user) {
+            const list = await api.networks()
+            store.set({ networks: Array.isArray(list) ? list : [] })
+          }
+        }
+      } else {
+        throw new Error('not ok')
       }
+    } catch(e) {
+      if (networkOk) {
+        networkOk = false
+        if (banner) banner.classList.remove('hidden')
+      }
+    }
+  }
+  checkNetwork()
+  setInterval(checkNetwork, 5000)
+  
+  // API status indicator (uses authenticated endpoint)
+  async function updateStatus() {
+    const token = localStorage.getItem('pieng_token') || ''
+    const s = document.getElementById('apiStatus')
+    const t = document.getElementById('apiStatusText')
+    if (!s || !t) return
+    
+    if (!token) {
+      s.className = 'status'
+      t.textContent = '—'
       return
     }
     try {
       const r = await fetch('/api/pieng/me', { 
         headers: { 'Authorization': 'Bearer ' + token } 
       })
-      const s = document.getElementById('apiStatus')
-      const t = document.getElementById('apiStatusText')
-      if (s && t) { 
-        s.className = 'status ' + (r.ok ? 'ok' : 'error')
-        t.textContent = r.ok ? 'ok' : 'auth'
-      }
+      s.className = 'status ' + (r.ok ? 'ok' : 'error')
+      t.textContent = r.ok ? 'ok' : 'auth'
     } catch(e) {
-      const s = document.getElementById('apiStatus')
-      const t = document.getElementById('apiStatusText')
-      if (s && t) { 
-        s.className = 'status error'
-        t.textContent = 'err'
-      }
+      s.className = 'status error'
+      t.textContent = 'err'
     }
   }
-  ping()
-  setInterval(ping, 30000)
+  updateStatus()
+  setInterval(updateStatus, 30000)
+  
+  // Auto-refresh data every 30 seconds to pick up changes from other users
+  async function autoRefresh() {
+    if (!store.user || !networkOk) return
+    try {
+      const list = await api.networks()
+      // Only update if data changed (simple length check to avoid unnecessary re-renders)
+      if (Array.isArray(list) && list.length !== store.networks?.length) {
+        store.set({ networks: list })
+      }
+    } catch(e) {
+      // Ignore errors - network check will handle connection issues
+    }
+  }
+  setInterval(autoRefresh, 30000)
 
   // Logout button
   const logoutBtn = document.getElementById('logoutBtn')
@@ -119,7 +158,7 @@ mountApp(root)
     const isAdmin = (u?.roles || []).includes('admin')
     document.body.classList.toggle('is-admin', isAdmin)
     
-    ping() // Update status on auth change
+    updateStatus() // Update status on auth change
     
     // Update nav active state
     const currentPage = store.currentPage || 'browse'

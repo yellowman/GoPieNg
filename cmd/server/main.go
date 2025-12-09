@@ -16,8 +16,8 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/yellowman/gopieng/internal/auth"
-	"github.com/yellowman/gopieng/internal/db"
-	"github.com/yellowman/gopieng/internal/middleware"
+	"github.com/yellowman/gopineg/internal/db"
+	"github.com/yellwoman/gopieng/internal/middleware"
 )
 
 var (
@@ -138,6 +138,10 @@ func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot stri
 	r.Route("/api/pieng", func(api chi.Router) {
 		// Unauthenticated
 		api.Post("/auth/login", auth.MakeLoginHandler(database.DB, jwt))
+		api.Get("/ping", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"status":"ok"}`))
+		})
 
 		// Authenticated
 		api.Group(func(priv chi.Router) {

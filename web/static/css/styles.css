@@ -876,6 +876,37 @@ body.is-admin .admin-only { display: inline; }
 }
 
 /* ============================================
+   NETWORK STATUS BANNER
+   ============================================ */
+
+.network-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--red);
+  color: white;
+  text-align: center;
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  z-index: 1000;
+  animation: slideDown 0.3s ease;
+}
+
+.network-banner.hidden {
+  display: none;
+}
+
+@keyframes slideDown {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
+
+body:has(.network-banner:not(.hidden)) .app-header {
+  top: 44px;
+}
+
+/* ============================================
    RESPONSIVE
    ============================================ */
 
