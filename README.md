@@ -2,8 +2,8 @@
 
 A modern, tree-based IPAM (IP Address Management) system with a Go backend and vanilla JavaScript frontend.
 
-Derived from Tim Howe's PieNg. The latest version of the original is at:
-https://github.com/yellowman/GoPieNg
+Derived from Tim Howe's PieNg. The original is at:
+https://gitlab.com/thowe/MoPieNg
 
 ## Features
 
@@ -169,22 +169,6 @@ On OpenBSD, the server automatically restricts itself using pledge:
 | `-no-static` | false | Disable static file serving |
 | `-webroot` | `web` | Path to web directory |
 
-## Coming from old PieNg?
-
-If using an existing PieNg database, run these SQL migrations:
-
-```sql
--- Ensure required roles exist (needed for user management)
-INSERT INTO roles (name) VALUES ('admin') ON CONFLICT DO NOTHING;
-INSERT INTO roles (name) VALUES ('user') ON CONFLICT DO NOTHING;
-
--- Grant admin role to existing admin user (adjust username as needed)
-INSERT INTO user_roles ("user", role)
-SELECT u.id, r.id FROM users u, roles r 
-WHERE u.username = 'admin' AND r.name = 'admin'
-ON CONFLICT DO NOTHING;
-```
-
 ### User Management
 
 User management is available in the UI under the Users tab (admin only). You can:
@@ -291,12 +275,12 @@ The default API base path is `/api/pieng`.
 - Enter IP (or leave blank for auto) and description
 - Click Add
 - Click description to edit
-- Click x to delete
+- Click del to delete
 
 ### User Management (Admin)
 - Go to Users tab (visible only to admins)
 - Add new users with username/password/role
-- Toggle admin role with +admin/-admin
+- Toggle user roles
 - Enable/disable users
 - Delete users
 

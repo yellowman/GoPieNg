@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/example/pieng-go-spa/internal/auth"
-	"github.com/example/pieng-go-spa/internal/ipam"
-	"github.com/example/pieng-go-spa/internal/middleware"
+	"github.com/yellowman/GoPieNg/internal/auth"
+	"github.com/yellowman/GoPieNg/internal/ipam"
+	"github.com/yellowman/GoPieNg/internal/middleware"
 )
 
 type Network struct{ ID int64; Parent sql.NullInt64; AddressRange string; Description sql.NullString; Subdivide bool; ValidMasks []int16; Owner, Account sql.NullString; Service sql.NullInt64 }

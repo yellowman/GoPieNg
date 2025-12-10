@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
-	"github.com/example/pieng-go-spa/internal/auth"
+	"github.com/yellowman/GoPieNg/internal/auth"
 )
 
 type ctxKey string
