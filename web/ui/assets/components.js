@@ -1,6 +1,6 @@
 import { api, auth } from './api.js'
 import { store } from './store.js'
-import { $, $$, el, notify, pushToast, showWarningModal } from './util.js'
+import { $, $$, el, notify, pushToast, showWarningModal, showConfirmModal } from './util.js'
 
 // Track expanded nodes
 const expanded = new Set()
@@ -37,6 +37,7 @@ export function mountApp(root){
   // Handle browser back/forward
   window.addEventListener('popstate', (e) => {
     if (e.state) {
+      resetScrollOnRender = true
       store.set({ currentPage: e.state.page || 'browse' })
     }
   })
@@ -45,13 +46,20 @@ export function mountApp(root){
   return () => un()
 }
 
-// Navigate with history
+// Navigate with history (resets scroll to top)
 function navigate(page) {
   history.pushState({ page }, '', `#${page}`)
+  resetScrollOnRender = true
   store.set({ currentPage: page })
 }
 
+// Flag to explicitly reset scroll (for navigation)
+let resetScrollOnRender = false
+
 function render(root){
+  const savedScroll = resetScrollOnRender ? 0 : window.scrollY
+  resetScrollOnRender = false
+  
   try {
     root.innerHTML = ''
     const st = store
@@ -66,7 +74,13 @@ function render(root){
     console.error('Render error:', e)
     root.innerHTML = `<div class="card" style="margin:2rem"><h2>Error</h2><p>${e.message}</p></div>`
   }
+  
+  // Restore scroll after DOM is built
+  window.scrollTo(0, savedScroll)
 }
+
+// Call this before store.set when navigation should reset scroll
+export function setResetScroll() { resetScrollOnRender = true }
 
 function App(){
   const wrap = el('div', { class:'main-content' })
@@ -1153,7 +1167,9 @@ function HostRow(host, network, panel){
   if (isEditor()) {
     const delBtn = el('button', { class: 'btn-del' }, 'del')
     delBtn.onclick = async () => {
-      if (!confirm('Delete ' + host.address + '?')) return
+      const desc = host.description ? ` "${host.description}"` : ''
+      const confirmed = await showConfirmModal(`Delete host ${host.address}${desc}?`)
+      if (!confirmed) return
       try {
         await api.delHost(host.address)
         if (window.syncLastChange) window.syncLastChange()
@@ -1369,6 +1385,7 @@ function Login(){
       auth.setToken(res.token)
       const me = await api.me()
       const list = await api.networks()
+      resetScrollOnRender = true
       store.set({ user: me, networks: Array.isArray(list) ? list : [], currentPage: 'browse' })
     } catch(e) {
       err.textContent = e.message || 'Login failed'

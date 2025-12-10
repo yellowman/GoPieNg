@@ -1,6 +1,6 @@
 import { api, auth } from './api.js'
 import { store } from './store.js'
-import { mountApp } from './components.js'
+import { mountApp, setResetScroll } from './components.js'
 
 const root = document.getElementById('app')
 
@@ -59,7 +59,10 @@ mountApp(root)
   let lastKnownChange = null
   
   // Call this after user-initiated changes to prevent auto-refresh from re-rendering
+  let suppressRefreshUntil = 0
   window.syncLastChange = async () => {
+    // Suppress auto-refresh for 3 seconds after user action
+    suppressRefreshUntil = Date.now() + 3000
     try {
       const r = await fetch('/api/pieng/ping', { cache: 'no-store' })
       if (r.ok) {
@@ -91,14 +94,24 @@ mountApp(root)
           const shouldRefresh = wasOffline || 
             (data.last_change && lastKnownChange !== null && data.last_change !== lastKnownChange)
           
-          if (shouldRefresh) {
+          // Skip if suppressed (recent user action) or search active
+          const searchActive = window.searchState && window.searchState.matches && window.searchState.matches.length > 0
+          const suppressed = Date.now() < suppressRefreshUntil
+          
+          if (shouldRefresh && !searchActive && !suppressed) {
             try {
               const list = await api.networks()
               const newNetworks = Array.isArray(list) ? list : []
-              // Only update if data actually changed AND we're not mid-search
-              // (search adds children to store.networks which would differ from root-only fetch)
-              const searchActive = window.searchState && window.searchState.matches && window.searchState.matches.length > 0
-              if (!searchActive && JSON.stringify(newNetworks) !== JSON.stringify(store.networks || [])) {
+              // Compare root networks only (store may have cached children)
+              const currentRoots = (store.networks || []).filter(n => !n.parent)
+              
+              // Compare by key fields to avoid false positives from field ordering
+              const serialize = nets => nets.map(n => 
+                `${n.id}|${n.address_range}|${n.description||''}|${n.owner||''}|${n.account||''}`
+              ).sort().join('\n')
+              
+              if (serialize(newNetworks) !== serialize(currentRoots)) {
+                // Data actually changed - scroll preserved automatically
                 store.set({ networks: newNetworks })
               }
             } catch(e) {
@@ -154,6 +167,7 @@ mountApp(root)
   if (logoutBtn) {
     logoutBtn.addEventListener('click', () => {
       auth.setToken('')
+      setResetScroll()
       store.set({ 
         user: null, 
         networks: [], 
@@ -200,7 +214,8 @@ mountApp(root)
       // Update active state
       document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'))
       link.classList.add('active')
-      // Update store
+      // Update store (reset scroll for page navigation)
+      setResetScroll()
       store.set({ currentPage: page, selected: null })
     }
   })
@@ -211,6 +226,7 @@ mountApp(root)
     document.querySelectorAll('nav a').forEach(a => {
       a.classList.toggle('active', a.dataset.page === page)
     })
+    setResetScroll()
     store.set({ currentPage: page })
   })
   

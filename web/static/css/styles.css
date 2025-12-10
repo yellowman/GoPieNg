@@ -186,6 +186,7 @@ html, body {
 .search-toggle {
   cursor: pointer;
   padding: 2px;
+  margin-right: 1.5rem;
 }
 .toggle-track {
   width: 24px;
@@ -1076,6 +1077,50 @@ body:has(.network-banner:not(.hidden)) .app-header {
   font-size: 0.8rem;
   color: #a88;
   font-weight: normal;
+}
+
+.confirm-modal::after {
+  display: none;
+}
+
+.confirm-modal {
+  cursor: default;
+}
+
+.confirm-text {
+  margin-bottom: 1.5rem;
+}
+
+.confirm-buttons {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+}
+
+.confirm-buttons button {
+  padding: 0.5rem 1.5rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  border: none;
+}
+
+.confirm-cancel {
+  background: var(--bg-3);
+  color: var(--text);
+}
+
+.confirm-cancel:hover {
+  background: var(--bg-2);
+}
+
+.confirm-ok {
+  background: #d9534f;
+  color: white;
+}
+
+.confirm-ok:hover {
+  background: #c9302c;
 }
 
 /* ============================================

@@ -87,3 +87,48 @@ export function showWarningModal(msg) {
   }
   overlay.addEventListener('click', dismiss)
 }
+
+export function showConfirmModal(msg) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div')
+    overlay.className = 'warning-modal-overlay'
+    
+    const modal = document.createElement('div')
+    modal.className = 'warning-modal confirm-modal'
+    modal.onclick = (e) => e.stopPropagation() // Prevent overlay dismiss
+    
+    const text = document.createElement('div')
+    text.className = 'confirm-text'
+    text.textContent = msg
+    modal.appendChild(text)
+    
+    const buttons = document.createElement('div')
+    buttons.className = 'confirm-buttons'
+    
+    const okBtn = document.createElement('button')
+    okBtn.className = 'confirm-ok'
+    okBtn.textContent = 'Delete'
+    okBtn.onclick = () => {
+      overlay.remove()
+      resolve(true)
+    }
+    
+    const cancelBtn = document.createElement('button')
+    cancelBtn.className = 'confirm-cancel'
+    cancelBtn.textContent = 'Cancel'
+    cancelBtn.onclick = () => {
+      overlay.remove()
+      resolve(false)
+    }
+    
+    buttons.appendChild(cancelBtn)
+    buttons.appendChild(okBtn)
+    modal.appendChild(buttons)
+    
+    overlay.appendChild(modal)
+    document.body.appendChild(overlay)
+    
+    // Focus cancel by default for safety
+    cancelBtn.focus()
+  })
+}
