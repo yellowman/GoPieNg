@@ -69,3 +69,21 @@ export function pushToast(msg, type='info', timeout=null){
   root.appendChild(el)
   setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateY(6px)'; setTimeout(()=> el.remove(), 200) }, timeout)
 }
+
+// Modal warning - centered, click anywhere to dismiss
+export function showWarningModal(msg) {
+  const overlay = document.createElement('div')
+  overlay.className = 'warning-modal-overlay'
+  
+  const modal = document.createElement('div')
+  modal.className = 'warning-modal'
+  modal.textContent = msg
+  
+  overlay.appendChild(modal)
+  document.body.appendChild(overlay)
+  
+  const dismiss = () => {
+    overlay.remove()
+  }
+  overlay.addEventListener('click', dismiss)
+}

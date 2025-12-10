@@ -1,4 +1,4 @@
-module github.com/yellowman/GoPieNg
+module github.com/example/pieng-go-spa
 
 go 1.22.3
 

@@ -20,6 +20,17 @@
         <a href="#" data-page="logs">Logs</a>
         <a href="#" data-page="users" class="admin-only">Users</a>
       </nav>
+      <div class="header-search" id="headerSearch">
+        <input type="text" id="searchInput" placeholder="search hosts" class="search-input" />
+        <span id="searchInfo" class="search-info"></span>
+        <button id="searchPrev" class="search-nav" title="Previous (Shift+Enter)">▲</button>
+        <button id="searchNext" class="search-nav" title="Next (Enter)">▼</button>
+        <div id="searchToggle" class="search-toggle" title="Toggle hosts/networks">
+          <div class="toggle-track">
+            <div class="toggle-thumb"></div>
+          </div>
+        </div>
+      </div>
       <div class="header-right">
         <div class="status" id="apiStatus"><span class="status-dot"></span><span id="apiStatusText">…</span></div>
         <span id="userBadge" class="user-badge">not signed in</span>

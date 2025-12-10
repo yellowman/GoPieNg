@@ -14,7 +14,7 @@ func FormatSmallIntArray(vals []int16) string { if len(vals)==0 { return "{}" };
 func InterfaceToSmallIntSlice(v any) []int16 { switch t := v.(type) { case []any: var out []int16; for _, e := range t { switch u := e.(type) { case float64: out = append(out, int16(u)); case int: out = append(out, int16(u)) } }; return out; default: return nil } }
 
 func NextFreeHostStr(cidr string, used map[string]bool) string { _, n, _ := net.ParseCIDR(cidr); return NextFreeHost(n, used) }
-func NextFreeHost(n *net.IPNet, used map[string]bool) string { first, last := firstAndLast(n); f := ipToBig(first); l := ipToBig(last); ipv6 := n.IP.To4()==nil; if !ipv6 && l.Cmp(f)>0 { f = new(big.Int).Add(f,big.NewInt(1)); l = new(big.Int).Sub(l,big.NewInt(1)) }; for cur := new(big.Int).Set(f); cur.Cmp(l) <= 0; cur.Add(cur, big.NewInt(1)) { ip := bigToIP(cur, ipv6).String(); if !used[ip] { return ip } }; return "" }
+func NextFreeHost(n *net.IPNet, used map[string]bool) string { first, last := firstAndLast(n); f := ipToBig(first); l := ipToBig(last); ipv6 := n.IP.To4()==nil; diff := new(big.Int).Sub(l, f); if !ipv6 && diff.Cmp(big.NewInt(1))>0 { f = new(big.Int).Add(f,big.NewInt(1)); l = new(big.Int).Sub(l,big.NewInt(1)) }; for cur := new(big.Int).Set(f); cur.Cmp(l) <= 0; cur.Add(cur, big.NewInt(1)) { ip := bigToIP(cur, ipv6).String(); if !used[ip] { return ip } }; return "" }
 
 func NextFreeSubnetStr(parent string, children []string, desiredMask int) (string, error) { p := cidrIPNet(parent); return NextFreeSubnet(p, children, desiredMask) }
 func NextFreeSubnet(parent *net.IPNet, childCIDRs []string, desiredMask int) (string, error) { if desiredMask<=0 { return "", errors.New("mask required") }; pm, _ := parent.Mask.Size(); if desiredMask < pm { return "", fmt.Errorf("mask %d < parent %d", desiredMask, pm) }; existing := []*net.IPNet{}; for _, c := range childCIDRs { _, n, err := net.ParseCIDR(c); if err==nil { existing = append(existing, n) } }; subs := SplitInto(parent, desiredMask); for _, n := range subs { collides := false; for _, c := range existing { if Overlap(n, c) { collides = true; break } }; if !collides { return n.String(), nil } }; return "", errors.New("no space") }
@@ -135,7 +135,9 @@ func AllHostsStr(cidr string) []string {
 	ipv6 := n.IP.To4() == nil
 	
 	// For IPv4, skip network and broadcast addresses
-	if !ipv6 && l.Cmp(f) > 0 {
+	// But not for /31 (point-to-point) or /32 where all addresses are usable
+	diff := new(big.Int).Sub(l, f)
+	if !ipv6 && diff.Cmp(big.NewInt(1)) > 0 {
 		f = new(big.Int).Add(f, big.NewInt(1))
 		l = new(big.Int).Sub(l, big.NewInt(1))
 	}

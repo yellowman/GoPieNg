@@ -1,9 +1,35 @@
 import { api, auth } from './api.js'
 import { store } from './store.js'
-import { $, $$, el, notify, pushToast } from './util.js'
+import { $, $$, el, notify, pushToast, showWarningModal } from './util.js'
 
 // Track expanded nodes
 const expanded = new Set()
+
+// Numeric IP sort helper
+function ipToNum(cidr) {
+  if (!cidr) return 0
+  const addr = cidr.split('/')[0]
+  const parts = addr.split('.')
+  if (parts.length !== 4) return 0
+  return parseInt(parts[0]) * 16777216 + parseInt(parts[1]) * 65536 + 
+         parseInt(parts[2]) * 256 + parseInt(parts[3])
+}
+
+// Role permission helpers
+function getUserRoles() {
+  return store.user?.roles || []
+}
+function isAdmin() {
+  return getUserRoles().includes('administrator')
+}
+function isCreator() {
+  const roles = getUserRoles()
+  return roles.includes('administrator') || roles.includes('creator')
+}
+function isEditor() {
+  const roles = getUserRoles()
+  return roles.includes('administrator') || roles.includes('creator') || roles.includes('editor')
+}
 
 export function mountApp(root){
   const un = store.on(() => render(root))
@@ -64,16 +90,170 @@ function NetworkTree(){
   const tree = el('div', { class:'net-tree' })
   card.appendChild(tree)
   
-  // Load root networks
-  const roots = store.networks.filter(n => !n.parent)
-  if (roots.length === 0) {
-    tree.appendChild(el('div', { class:'sub' }, 'No networks found'))
-  } else {
-    roots.sort((a, b) => (a.address_range || '').localeCompare(b.address_range || ''))
-    for (const net of roots) {
-      tree.appendChild(TreeNode(net, 0))
+  function renderTree() {
+    tree.innerHTML = ''
+    const roots = store.networks.filter(n => !n.parent)
+    if (roots.length === 0) {
+      tree.appendChild(el('div', { class:'sub' }, 'No networks found'))
+    } else {
+      roots.sort((a, b) => ipToNum(a.address_range) - ipToNum(b.address_range))
+      for (const net of roots) {
+        tree.appendChild(TreeNode(net, 0))
+      }
     }
   }
+  
+  // Expand a path to a network without rebuilding entire tree
+  async function expandPath(ancestry, targetId) {
+    // Suppress host panel auto-load during expansion
+    window._suppressHostPanelLoad = true
+    
+    for (let i = 0; i < ancestry.length; i++) {
+      const netId = ancestry[i]
+      const depth = i + 1  // Root is depth 0, first ancestor is depth 1
+      
+      expanded.add(netId)
+      
+      // Find the node in DOM
+      const node = document.querySelector(`.tree-node[data-id="${netId}"]`)
+      if (!node) continue
+      
+      // Check if it's a subdivide node with children container
+      const childrenContainer = node.querySelector(':scope > .tree-children')
+      if (childrenContainer) {
+        // Show it if hidden
+        childrenContainer.classList.remove('hidden')
+        
+        // Update button text
+        const openBtn = node.querySelector('.btn-open')
+        if (openBtn) openBtn.textContent = 'close'
+        const toggle = node.querySelector('.tree-toggle')
+        if (toggle) toggle.textContent = '▼'
+        
+        // Load children if empty or just has loading indicator
+        if (childrenContainer.children.length === 0 || childrenContainer.querySelector('.loading')) {
+          const net = store.networks.find(n => n.id === netId)
+          if (net) {
+            await loadTreeChildren(childrenContainer, net, depth)
+          }
+        }
+      }
+    }
+    
+    window._suppressHostPanelLoad = false
+    
+    // Also expand the target if it's a network
+    if (targetId) {
+      expanded.add(targetId)
+    }
+  }
+  
+  // Global search navigation - called from app.js
+  window.goToSearchMatch = async function() {
+    const st = window.searchState
+    if (!st || st.matches.length === 0) return
+    
+    const match = st.matches[st.matchIndex]
+    
+    // Clear previous highlights
+    document.querySelectorAll('.search-match').forEach(el => el.classList.remove('search-match'))
+    document.querySelectorAll('.search-match-host').forEach(el => el.classList.remove('search-match-host'))
+    
+    if (match.type === 'network') {
+      // Expand path without full re-render
+      await expandPath(match.ancestry || [], match.id)
+      
+      // Check if node exists now
+      let node = document.querySelector(`.tree-node[data-id="${match.id}"]`)
+      
+      // If not found, we need a full render (first time or collapsed parent)
+      if (!node) {
+        window._suppressHostPanelLoad = true
+        const scrollY = window.scrollY
+        renderTree()
+        window.scrollTo(0, scrollY)
+        window._suppressHostPanelLoad = false
+        
+        // Wait for it
+        await new Promise(resolve => setTimeout(resolve, 100))
+        node = document.querySelector(`.tree-node[data-id="${match.id}"]`)
+      }
+      
+      if (node) {
+        node.classList.add('search-match')
+        const row = node.querySelector('.tree-row')
+        ;(row || node).scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+      
+    } else if (match.type === 'host') {
+      // Expand path to the host's network
+      await expandPath(match.ancestry || [], match.network_id)
+      
+      // Check if network node exists
+      let node = document.querySelector(`.tree-node[data-id="${match.network_id}"]`)
+      
+      // If not found, we need a full render
+      if (!node) {
+        window._suppressHostPanelLoad = true
+        const scrollY = window.scrollY
+        renderTree()
+        window.scrollTo(0, scrollY)
+        window._suppressHostPanelLoad = false
+        
+        await new Promise(resolve => setTimeout(resolve, 100))
+        node = document.querySelector(`.tree-node[data-id="${match.network_id}"]`)
+      }
+      
+      if (!node) return
+      
+      const hostsBtn = node.querySelector('.btn-hosts')
+      const panel = node.querySelector('.host-panel')
+      const toggle = node.querySelector('.tree-toggle')
+      
+      // Show panel
+      if (panel && panel.classList.contains('hidden')) {
+        panel.classList.remove('hidden')
+        expanded.add(match.network_id)
+        if (hostsBtn) hostsBtn.textContent = 'close'
+        if (toggle) toggle.textContent = '▼'
+      }
+      
+      // Load hosts if needed
+      if (panel && panel.children.length === 0) {
+        const net = store.networks.find(n => n.id === match.network_id)
+        if (net) {
+          panel.innerHTML = '<div class="loading">Loading...</div>'
+          try {
+            const hosts = await api.hosts(net.id)
+            panel.innerHTML = ''
+            const table = el('table', { class: 'hosts-table' })
+            const tbody = el('tbody')
+            for (const h of hosts) {
+              tbody.appendChild(HostRow(h, net, panel))
+            }
+            table.appendChild(tbody)
+            panel.appendChild(table)
+          } catch(e) {
+            panel.innerHTML = '<div class="error">Error</div>'
+          }
+        }
+      }
+      
+      // Find and scroll to host
+      await new Promise(resolve => setTimeout(resolve, 50))
+      const hostRow = document.querySelector(`.host-row[data-addr="${match.address}"]`)
+      if (hostRow) {
+        hostRow.classList.add('search-match-host')
+        hostRow.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      } else {
+        const row = node.querySelector('.tree-row')
+        ;(row || node).scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    }
+  }
+  
+  // Initial render
+  renderTree()
   
   return card
 }
@@ -91,121 +271,166 @@ function TreeNode(net, depth){
     style: `padding-left: ${depth * 20 + 8}px`
   })
   
-  // Expand/collapse toggle - works for both subdivide and leaf networks
+  // Expand/collapse toggle - delegates to open/hosts button
   const toggle = el('button', { class: 'tree-toggle' }, isExpanded ? '▼' : '▶')
-  toggle.onclick = async (e) => {
-    e.stopPropagation()
-    if (expanded.has(net.id)) {
-      expanded.delete(net.id)
-    } else {
-      expanded.add(net.id)
-    }
-    store.set({}) // Re-render
-  }
+  // Click handler set after actions are created
   row.appendChild(toggle)
   
   // CIDR
   row.appendChild(el('span', { class: 'tree-cidr' }, net.address_range || '?'))
   
-  // Editable description
+  // Description - editable for editors
   const descWrap = el('span', { class: 'tree-desc' })
   const descSpan = el('span', { class: 'desc-text' }, net.description || '—')
-  const descInput = el('input', { type: 'text', class: 'desc-edit hidden', value: net.description || '' })
   
-  descSpan.onclick = (e) => {
-    e.stopPropagation()
-    descSpan.classList.add('hidden')
-    descInput.classList.remove('hidden')
-    descInput.focus()
-    descInput.select()
-  }
-  
-  descInput.onblur = async () => {
-    const newDesc = descInput.value.trim()
-    if (newDesc !== (net.description || '')) {
-      try {
-        await api.updateNetwork(net.id, { description: newDesc })
-        descSpan.textContent = newDesc || '—'
-        net.description = newDesc
-        pushToast('Updated', 'info')
-      } catch(e) {
-        pushToast('Failed: ' + e.message, 'error')
+  if (isEditor()) {
+    const descInput = el('input', { type: 'text', class: 'desc-edit hidden', value: net.description || '' })
+    
+    descSpan.onclick = (e) => {
+      e.stopPropagation()
+      descSpan.classList.add('hidden')
+      descInput.classList.remove('hidden')
+      descInput.focus()
+      descInput.select()
+    }
+    
+    descInput.onblur = async () => {
+      const newDesc = descInput.value.trim()
+      if (newDesc !== (net.description || '')) {
+        try {
+          await api.updateNetwork(net.id, { description: newDesc })
+          descSpan.textContent = newDesc || '—'
+          net.description = newDesc
+          if (window.syncLastChange) window.syncLastChange()
+          pushToast('Updated', 'info')
+        } catch(e) {
+          pushToast('Failed: ' + e.message, 'error')
+          descInput.value = net.description || ''
+        }
+      }
+      descSpan.classList.remove('hidden')
+      descInput.classList.add('hidden')
+    }
+    
+    descInput.onkeydown = (e) => {
+      e.stopPropagation()
+      if (e.key === 'Enter') descInput.blur()
+      if (e.key === 'Escape') {
         descInput.value = net.description || ''
+        descInput.blur()
       }
     }
-    descSpan.classList.remove('hidden')
-    descInput.classList.add('hidden')
+    
+    descWrap.appendChild(descSpan)
+    descWrap.appendChild(descInput)
+  } else {
+    descWrap.appendChild(descSpan)
   }
-  
-  descInput.onkeydown = (e) => {
-    e.stopPropagation()
-    if (e.key === 'Enter') descInput.blur()
-    if (e.key === 'Escape') {
-      descInput.value = net.description || ''
-      descInput.blur()
-    }
-  }
-  
-  descWrap.appendChild(descSpan)
-  descWrap.appendChild(descInput)
   row.appendChild(descWrap)
   
-  // Editable owner
+  // Owner - editable for editors
   const ownerWrap = el('span', { class: 'tree-owner' })
   const ownerSpan = el('span', { class: 'owner-text' }, net.owner || '')
-  const ownerInput = el('input', { type: 'text', class: 'owner-edit hidden', value: net.owner || '', placeholder: 'owner' })
   
-  ownerSpan.onclick = (e) => {
-    e.stopPropagation()
-    ownerSpan.classList.add('hidden')
-    ownerInput.classList.remove('hidden')
-    ownerInput.focus()
-    ownerInput.select()
-  }
-  
-  ownerInput.onblur = async () => {
-    const newOwner = ownerInput.value.trim()
-    if (newOwner !== (net.owner || '')) {
-      try {
-        await api.updateNetwork(net.id, { owner: newOwner })
-        ownerSpan.textContent = newOwner || ''
-        net.owner = newOwner
-        pushToast('Owner updated', 'info')
-      } catch(e) {
-        pushToast('Failed: ' + e.message, 'error')
+  if (isEditor()) {
+    const ownerInput = el('input', { type: 'text', class: 'owner-edit hidden', value: net.owner || '', placeholder: 'owner' })
+    
+    ownerSpan.onclick = (e) => {
+      e.stopPropagation()
+      ownerSpan.classList.add('hidden')
+      ownerInput.classList.remove('hidden')
+      ownerInput.focus()
+      ownerInput.select()
+    }
+    
+    ownerInput.onblur = async () => {
+      const newOwner = ownerInput.value.trim()
+      if (newOwner !== (net.owner || '')) {
+        try {
+          await api.updateNetwork(net.id, { owner: newOwner })
+          ownerSpan.textContent = newOwner || ''
+          net.owner = newOwner
+          if (window.syncLastChange) window.syncLastChange()
+          pushToast('Owner updated', 'info')
+        } catch(e) {
+          pushToast('Failed: ' + e.message, 'error')
+          ownerInput.value = net.owner || ''
+        }
+      }
+      ownerSpan.classList.remove('hidden')
+      ownerInput.classList.add('hidden')
+    }
+    
+    ownerInput.onkeydown = (e) => {
+      e.stopPropagation()
+      if (e.key === 'Enter') ownerInput.blur()
+      if (e.key === 'Escape') {
         ownerInput.value = net.owner || ''
+        ownerInput.blur()
       }
     }
-    ownerSpan.classList.remove('hidden')
-    ownerInput.classList.add('hidden')
+    
+    ownerWrap.appendChild(ownerSpan)
+    ownerWrap.appendChild(ownerInput)
+  } else {
+    ownerWrap.appendChild(ownerSpan)
   }
-  
-  ownerInput.onkeydown = (e) => {
-    e.stopPropagation()
-    if (e.key === 'Enter') ownerInput.blur()
-    if (e.key === 'Escape') {
-      ownerInput.value = net.owner || ''
-      ownerInput.blur()
-    }
-  }
-  
-  ownerWrap.appendChild(ownerSpan)
-  ownerWrap.appendChild(ownerInput)
   row.appendChild(ownerWrap)
   
-  // Meta info (account only now, owner is editable separately)
-  const meta = []
-  if (net.account) meta.push(net.account)
-  if (meta.length) {
-    row.appendChild(el('span', { class: 'tree-meta' }, meta.join(' · ')))
+  // Account - editable for editors
+  const accountWrap = el('span', { class: 'tree-account' })
+  const accountSpan = el('span', { class: 'account-text' }, net.account || '')
+  
+  if (isEditor()) {
+    const accountInput = el('input', { type: 'text', class: 'account-edit hidden', value: net.account || '', placeholder: 'account' })
+    
+    accountSpan.onclick = (e) => {
+      e.stopPropagation()
+      accountSpan.classList.add('hidden')
+      accountInput.classList.remove('hidden')
+      accountInput.focus()
+      accountInput.select()
+    }
+    
+    accountInput.onblur = async () => {
+      const newAccount = accountInput.value.trim()
+      if (newAccount !== (net.account || '')) {
+        try {
+          await api.updateNetwork(net.id, { account: newAccount })
+          accountSpan.textContent = newAccount || ''
+          net.account = newAccount
+          if (window.syncLastChange) window.syncLastChange()
+          pushToast('Account updated', 'info')
+        } catch(e) {
+          pushToast('Failed: ' + e.message, 'error')
+          accountInput.value = net.account || ''
+        }
+      }
+      accountSpan.classList.remove('hidden')
+      accountInput.classList.add('hidden')
+    }
+    
+    accountInput.onkeydown = (e) => {
+      e.stopPropagation()
+      if (e.key === 'Enter') accountInput.blur()
+      if (e.key === 'Escape') {
+        accountInput.value = net.account || ''
+        accountInput.blur()
+      }
+    }
+    
+    accountWrap.appendChild(accountSpan)
+    accountWrap.appendChild(accountInput)
+  } else {
+    accountWrap.appendChild(accountSpan)
   }
+  row.appendChild(accountWrap)
   
   // Actions - flush right
   const actions = el('div', { class: 'tree-actions' })
   
   // Settings button for admins (subdivide networks only)
-  const isAdmin = (store.user?.roles || []).includes('admin')
-  if (isSubdivide && isAdmin) {
+  if (isSubdivide && isAdmin()) {
     const settingsBtn = el('button', { class: 'btn-action btn-settings' }, '⚙')
     settingsBtn.title = 'Edit allocation sizes'
     settingsBtn.onclick = (e) => {
@@ -219,37 +444,69 @@ function TreeNode(net, depth){
     const openBtn = el('button', { class: 'btn-action btn-open' }, isExpanded ? 'close' : 'open')
     openBtn.onclick = async (e) => {
       e.stopPropagation()
+      const children = wrapper.querySelector('.tree-children')
       if (expanded.has(net.id)) {
         expanded.delete(net.id)
+        openBtn.textContent = 'open'
+        if (children) children.classList.add('hidden')
       } else {
         expanded.add(net.id)
-        // Scroll into view after render
-        setTimeout(() => {
-          wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        }, 50)
+        openBtn.textContent = 'close'
+        if (children) {
+          children.classList.remove('hidden')
+          // Load children if empty
+          if (children.children.length === 0 || children.querySelector('.loading')) {
+            loadTreeChildren(children, net, depth + 1)
+          }
+          // Scroll row into view to show expanded content
+          setTimeout(() => {
+            row.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }, 50)
+        }
       }
-      store.set({})
+      // Update toggle arrow
+      toggle.textContent = expanded.has(net.id) ? '▼' : '▶'
     }
     actions.appendChild(openBtn)
   } else {
     const hostsBtn = el('button', { class: 'btn-action btn-hosts' }, isExpanded ? 'close' : 'hosts')
     hostsBtn.onclick = (e) => {
       e.stopPropagation()
+      const panel = wrapper.querySelector('.host-panel')
       if (expanded.has(net.id)) {
         expanded.delete(net.id)
+        hostsBtn.textContent = 'hosts'
+        if (panel) panel.classList.add('hidden')
       } else {
         expanded.add(net.id)
-        // Scroll into view after render
-        setTimeout(() => {
-          wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        }, 50)
+        hostsBtn.textContent = 'close'
+        if (panel) {
+          panel.classList.remove('hidden')
+          // Load hosts if empty
+          if (panel.children.length === 0) {
+            loadHostPanel(panel, net)
+          }
+          // Scroll row into view to show expanded content
+          setTimeout(() => {
+            row.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }, 50)
+        }
       }
-      store.set({})
+      // Update toggle arrow
+      toggle.textContent = expanded.has(net.id) ? '▼' : '▶'
     }
     actions.appendChild(hostsBtn)
   }
   
   row.appendChild(actions)
+  
+  // Set up toggle to delegate to the open/hosts button
+  toggle.onclick = (e) => {
+    e.stopPropagation()
+    const btn = actions.querySelector('.btn-open, .btn-hosts')
+    if (btn) btn.click()
+  }
+  
   wrapper.appendChild(row)
   
   // Children container (for subdivide networks)
@@ -264,7 +521,8 @@ function TreeNode(net, depth){
   } else {
     // Host panel for leaf networks - use expanded state
     const panel = el('div', { class: 'host-panel' + (isExpanded ? '' : ' hidden') })
-    if (isExpanded) {
+    // Don't auto-load during search expansion (causes scroll position issues)
+    if (isExpanded && !window._suppressHostPanelLoad) {
       loadHostPanel(panel, net)
     }
     wrapper.appendChild(panel)
@@ -274,34 +532,52 @@ function TreeNode(net, depth){
 }
 
 async function loadTreeChildren(container, parent, depth){
-  container.innerHTML = '<div class="loading">Loading...</div>'
+  // Check if children already exist in store (e.g., from search)
+  let children = store.networks.filter(n => n.parent === parent.id)
   
-  try {
-    const kids = await api.networks(parent.id)
-    const children = Array.isArray(kids) ? kids : []
-    container.innerHTML = ''
+  if (children.length === 0) {
+    container.innerHTML = '<div class="loading">Loading...</div>'
     
-    // Allocation bar at top
-    const allocBar = createAllocBar(parent, container)
-    if (allocBar) container.appendChild(allocBar)
-    
-    if (children.length === 0) {
-      container.appendChild(el('div', { class: 'tree-empty', style: `padding-left:${depth * 20 + 28}px` }, 
-        'No subnets allocated yet'))
-    } else {
-      children.sort((a, b) => (a.address_range || '').localeCompare(b.address_range || ''))
-      for (const kid of children) {
-        container.appendChild(TreeNode(kid, depth))
+    try {
+      const kids = await api.networks(parent.id)
+      children = Array.isArray(kids) ? kids : []
+      // Add to store for future use
+      if (children.length > 0) {
+        const existingIds = new Set(store.networks.map(n => n.id))
+        const newChildren = children.filter(c => !existingIds.has(c.id))
+        if (newChildren.length > 0) {
+          store.networks = [...store.networks, ...newChildren]
+        }
       }
+    } catch(e) {
+      container.innerHTML = ''
+      container.appendChild(el('div', { class: 'sub' }, 'Failed to load: ' + e.message))
+      return
     }
-  } catch(e) {
-    container.innerHTML = ''
-    container.appendChild(el('div', { class: 'sub' }, 'Failed to load: ' + e.message))
+  }
+  
+  container.innerHTML = ''
+  
+  // Allocation bar at top
+  const allocBar = createAllocBar(parent, container)
+  if (allocBar) container.appendChild(allocBar)
+  
+  if (children.length === 0) {
+    container.appendChild(el('div', { class: 'tree-empty', style: `padding-left:${depth * 20 + 28}px` }, 
+      'No subnets allocated yet'))
+  } else {
+    children.sort((a, b) => ipToNum(a.address_range) - ipToNum(b.address_range))
+    for (const kid of children) {
+      container.appendChild(TreeNode(kid, depth))
+    }
   }
 }
 
 function createAllocBar(parent, container){
   if (!parent.subdivide) return null
+  
+  // Only creators can allocate networks
+  if (!isCreator()) return null
   
   // Calculate available masks based on parent CIDR
   const match = (parent.address_range || '').match(/\/(\d+)$/)
@@ -358,6 +634,12 @@ function createAllocBar(parent, container){
     maskBtns.forEach(b => {
       b.classList.toggle('selected', parseInt(b.dataset.mask) === mask)
     })
+    // Refresh available subnets panel if it's open
+    const existingPanel = container.querySelector('.avail-subnets')
+    if (existingPanel) {
+      existingPanel.remove()
+      showAvailableSubnets(parent, container, descInput, () => selectedMask)
+    }
   }
   
   // Preferred masks (highlighted - larger blocks)
@@ -444,6 +726,7 @@ async function showAvailableSubnets(parent, container, descInput, getMask){
           await api.allocSubnetAt(parent.id, sub.address_range, desc, false)
           if (descInput) descInput.value = ''
           pushToast(`Assigned ${sub.address_range}`, 'info')
+          if (window.syncLastChange) window.syncLastChange()
           store.set({}) // Re-render
         } catch(e) {
           pushToast('Failed: ' + e.message, 'error')
@@ -459,6 +742,7 @@ async function showAvailableSubnets(parent, container, descInput, getMask){
           await api.allocSubnetAt(parent.id, sub.address_range, desc, true)
           if (descInput) descInput.value = ''
           pushToast(`Allocated ${sub.address_range} for subdivision`, 'info')
+          if (window.syncLastChange) window.syncLastChange()
           store.set({}) // Re-render
         } catch(e) {
           pushToast('Failed: ' + e.message, 'error')
@@ -483,6 +767,7 @@ async function allocateSubnet(parent, mask, description, descInput){
     const res = await api.allocSubnet(parent.id, mask, desc)
     if (descInput) descInput.value = ''
     pushToast(`Allocated /${mask} → ${res.address_range}`, 'info')
+    if (window.syncLastChange) window.syncLastChange()
     store.set({}) // Re-render
   } catch(e) {
     pushToast('Failed: ' + e.message, 'error')
@@ -567,6 +852,7 @@ function showNetworkSettings(net, wrapper){
     try {
       await api.updateNetwork(net.id, { valid_masks: selected })
       net.valid_masks = selected
+      if (window.syncLastChange) window.syncLastChange()
       pushToast('Saved allocation sizes', 'info')
       panel.remove()
       store.set({}) // Refresh to show new options
@@ -590,56 +876,63 @@ async function loadHostPanel(panel, network, highlightAddr = null){
   // Header with mode toggle
   const header = el('div', { class: 'host-header' })
   
-  // Add form
-  const addForm = el('div', { class: 'host-form' })
-  const ipInput = el('input', { type: 'text', placeholder: 'IP (empty=auto)', class: 'host-ip' })
-  const descInput = el('input', { type: 'text', placeholder: 'Description', class: 'host-desc-input' })
-  const addBtn = el('button', { class: 'btn-add' }, 'Add')
-  
-  addBtn.onclick = async () => {
-    const desc = descInput.value.trim() || 'manual'
-    try {
-      let allocatedAddr = null
-      if (ipInput.value.trim()) {
-        await api.addHost(network.id, ipInput.value.trim(), desc)
-        allocatedAddr = ipInput.value.trim()
-        pushToast('Added ' + allocatedAddr, 'info')
-      } else {
-        const res = await api.allocHost(network.id, desc)
-        allocatedAddr = res.address
-        pushToast('Allocated ' + allocatedAddr, 'info')
+  // Add form - editors and above only
+  if (isEditor()) {
+    const addForm = el('div', { class: 'host-form' })
+    const ipInput = el('input', { type: 'text', placeholder: 'IP (empty=auto)', class: 'host-ip' })
+    const descInput = el('input', { type: 'text', placeholder: 'Description', class: 'host-desc-input' })
+    const addBtn = el('button', { class: 'btn-add' }, 'Add')
+    
+    addBtn.onclick = async () => {
+      const desc = descInput.value.trim() || 'manual'
+      try {
+        let allocatedAddr = null
+        if (ipInput.value.trim()) {
+          await api.addHost(network.id, ipInput.value.trim(), desc)
+          allocatedAddr = ipInput.value.trim()
+          pushToast('Added ' + allocatedAddr, 'info')
+        } else {
+          const res = await api.allocHost(network.id, desc)
+          allocatedAddr = res.address
+          pushToast('Allocated ' + allocatedAddr, 'info')
+        }
+        ipInput.value = ''
+        descInput.value = ''
+        
+        // Sync change tracker so auto-refresh doesn't re-render
+        if (window.syncLastChange) window.syncLastChange()
+        
+        loadHostPanel(panel, network, allocatedAddr)
+        
+        // Ping check in background (if enabled on server)
+        if (allocatedAddr) {
+          api.pingCheck(allocatedAddr).then(result => {
+            if (result && result.responds) {
+              showWarningModal(`Warning: ${allocatedAddr} already responds!`)
+            }
+          })
+        }
+      } catch(e) {
+        pushToast('Failed: ' + e.message, 'error')
       }
-      ipInput.value = ''
-      descInput.value = ''
-      loadHostPanel(panel, network, allocatedAddr)
-      
-      // Ping check in background (if enabled on server)
-      if (allocatedAddr) {
-        api.pingCheck(allocatedAddr).then(result => {
-          if (result && result.responds) {
-            pushToast(`⚠️ Warning: ${allocatedAddr} already responds to ping!`, 'warning')
-          }
-        })
-      }
-    } catch(e) {
-      pushToast('Failed: ' + e.message, 'error')
     }
+    
+    const handleEnter = (e) => { if (e.key === 'Enter') addBtn.click() }
+    ipInput.onkeydown = handleEnter
+    descInput.onkeydown = handleEnter
+    
+    addForm.appendChild(ipInput)
+    addForm.appendChild(descInput)
+    addForm.appendChild(addBtn)
+    
+    // Edit mode toggle button
+    const editBtn = el('button', { class: 'btn-edit-mode', title: 'Show all addresses' }, 'E')
+    editBtn.onclick = () => loadHostPanelEditMode(panel, network)
+    
+    header.appendChild(addForm)
+    header.appendChild(editBtn)
   }
   
-  const handleEnter = (e) => { if (e.key === 'Enter') addBtn.click() }
-  ipInput.onkeydown = handleEnter
-  descInput.onkeydown = handleEnter
-  
-  addForm.appendChild(ipInput)
-  addForm.appendChild(descInput)
-  addForm.appendChild(addBtn)
-  
-  // Edit mode toggle button
-  const editBtn = el('button', { class: 'btn-edit-mode', title: 'Show all addresses' }, 'E')
-  editBtn.onclick = () => loadHostPanelEditMode(panel, network)
-  
-  header.appendChild(addForm)
-  header.appendChild(editBtn)
   panel.appendChild(header)
   
   // Load hosts
@@ -733,7 +1026,7 @@ async function loadHostPanelEditMode(panel, network){
 }
 
 function HostRowEditMode(host, network, panel){
-  const tr = el('tr', { class: host.used ? 'used' : 'free' })
+  const tr = el('tr', { class: 'host-row ' + (host.used ? 'used' : 'free'), 'data-addr': host.address })
   
   // Just IP, no /32
   tr.appendChild(el('td', { class: 'host-addr' }, host.address))
@@ -768,7 +1061,18 @@ function HostRowEditMode(host, network, panel){
           host.description = newDesc
           tr.className = 'used'
           pushToast(wasUsed ? 'Updated' : 'Added ' + host.address, 'info')
+          
+          // Ping check for new allocations only
+          if (!wasUsed) {
+            api.pingCheck(host.address).then(result => {
+              if (result && result.responds) {
+                showWarningModal(`Warning: ${host.address} already responds!`)
+              }
+            })
+          }
         }
+        // Sync change tracker so auto-refresh doesn't re-render
+        if (window.syncLastChange) window.syncLastChange()
       } catch(e) {
         pushToast('Failed: ' + e.message, 'error')
         descInput.value = oldDesc
@@ -791,66 +1095,77 @@ function HostRowEditMode(host, network, panel){
 }
 
 function HostRow(host, network, panel){
-  const tr = el('tr')
+  const tr = el('tr', { class: 'host-row', 'data-addr': host.address })
   // Strip /32 suffix if present, just show IP
   const displayAddr = host.address.replace(/\/32$/, '')
   tr.appendChild(el('td', { class: 'host-addr' }, displayAddr))
   
-  // Editable description
+  // Description cell
   const descTd = el('td', { class: 'host-desc-cell' })
   const descSpan = el('span', { class: 'desc-text' }, host.description || '—')
-  const descInput = el('input', { type: 'text', class: 'desc-edit hidden', value: host.description || '' })
   
-  descSpan.onclick = () => {
-    descSpan.classList.add('hidden')
-    descInput.classList.remove('hidden')
-    descInput.focus()
-    descInput.select()
-  }
-  
-  descInput.onblur = async () => {
-    const newDesc = descInput.value.trim()
-    if (newDesc !== (host.description || '')) {
-      try {
-        await api.addHost(network.id, host.address, newDesc, true) // update: true
-        descSpan.textContent = newDesc || '—'
-        host.description = newDesc
-        pushToast('Updated', 'info')
-      } catch(e) {
-        pushToast('Failed: ' + e.message, 'error')
+  // Only editors can edit description inline
+  if (isEditor()) {
+    const descInput = el('input', { type: 'text', class: 'desc-edit hidden', value: host.description || '' })
+    
+    descSpan.onclick = () => {
+      descSpan.classList.add('hidden')
+      descInput.classList.remove('hidden')
+      descInput.focus()
+      descInput.select()
+    }
+    
+    descInput.onblur = async () => {
+      const newDesc = descInput.value.trim()
+      if (newDesc !== (host.description || '')) {
+        try {
+          await api.addHost(network.id, host.address, newDesc, true) // update: true
+          descSpan.textContent = newDesc || '—'
+          host.description = newDesc
+          if (window.syncLastChange) window.syncLastChange()
+          pushToast('Updated', 'info')
+        } catch(e) {
+          pushToast('Failed: ' + e.message, 'error')
+          descInput.value = host.description || ''
+        }
+      }
+      descSpan.classList.remove('hidden')
+      descInput.classList.add('hidden')
+    }
+    
+    descInput.onkeydown = (e) => {
+      if (e.key === 'Enter') descInput.blur()
+      if (e.key === 'Escape') {
         descInput.value = host.description || ''
+        descInput.blur()
       }
     }
-    descSpan.classList.remove('hidden')
-    descInput.classList.add('hidden')
+    
+    descTd.appendChild(descSpan)
+    descTd.appendChild(descInput)
+  } else {
+    descTd.appendChild(descSpan)
   }
-  
-  descInput.onkeydown = (e) => {
-    if (e.key === 'Enter') descInput.blur()
-    if (e.key === 'Escape') {
-      descInput.value = host.description || ''
-      descInput.blur()
-    }
-  }
-  
-  descTd.appendChild(descSpan)
-  descTd.appendChild(descInput)
   tr.appendChild(descTd)
   
-  // Delete
+  // Delete - editors only
   const actTd = el('td', { class: 'host-actions' })
-  const delBtn = el('button', { class: 'btn-del' }, '×')
-  delBtn.onclick = async () => {
-    if (!confirm('Delete ' + host.address + '?')) return
-    try {
-      await api.delHost(host.address)
-      loadHostPanel(panel, network)
-      pushToast('Deleted', 'info')
-    } catch(e) {
-      pushToast('Failed: ' + e.message, 'error')
+  if (isEditor()) {
+    const delBtn = el('button', { class: 'btn-del' }, 'del')
+    delBtn.onclick = async () => {
+      if (!confirm('Delete ' + host.address + '?')) return
+      try {
+        await api.delHost(host.address)
+        if (window.syncLastChange) window.syncLastChange()
+        // Remove row directly instead of reloading panel
+        tr.remove()
+        pushToast('Deleted', 'info')
+      } catch(e) {
+        pushToast('Failed: ' + e.message, 'error')
+      }
     }
+    actTd.appendChild(delBtn)
   }
-  actTd.appendChild(delBtn)
   tr.appendChild(actTd)
   
   return tr
@@ -860,10 +1175,7 @@ function UsersPage(){
   const card = el('div', { class: 'card' })
   card.appendChild(el('h2', {}, 'User Management'))
   
-  const st = store
-  const isAdmin = (st.user?.roles || []).includes('admin')
-  
-  if (!isAdmin) {
+  if (!isAdmin()) {
     card.appendChild(el('div', { class: 'sub' }, 'Admin access required'))
     return card
   }
@@ -873,8 +1185,10 @@ function UsersPage(){
   const userInput = el('input', { type: 'text', placeholder: 'Username' })
   const passInput = el('input', { type: 'password', placeholder: 'Password' })
   const roleSelect = el('select')
-  roleSelect.appendChild(el('option', { value: '' }, 'user'))
-  roleSelect.appendChild(el('option', { value: 'admin' }, 'admin'))
+  roleSelect.appendChild(el('option', { value: '' }, 'reader'))
+  roleSelect.appendChild(el('option', { value: 'editor' }, 'editor'))
+  roleSelect.appendChild(el('option', { value: 'creator' }, 'creator'))
+  roleSelect.appendChild(el('option', { value: 'administrator' }, 'administrator'))
   const addBtn = el('button', { class: 'primary' }, 'Add User')
   
   addBtn.onclick = async () => {
@@ -925,24 +1239,32 @@ function UsersPage(){
     for (const user of users) {
       const tr = el('tr')
       tr.appendChild(el('td', {}, user.username))
-      tr.appendChild(el('td', {}, (user.roles || []).join(', ') || 'user'))
+      tr.appendChild(el('td', {}, (user.roles || []).join(', ') || 'reader'))
       tr.appendChild(el('td', {}, user.status === 1 ? 'active' : 'disabled'))
       
       const actTd = el('td', { class: 'user-actions' })
       
-      const adminBtn = el('button', { class: 'btn-sm' }, 
-        (user.roles || []).includes('admin') ? '−admin' : '+admin')
-      adminBtn.onclick = async () => {
-        const hasAdmin = (user.roles || []).includes('admin')
+      // Role dropdown
+      const currentRole = (user.roles || [])[0] || ''
+      const roleDropdown = el('select', { class: 'role-select' })
+      roleDropdown.appendChild(el('option', { value: '' }, 'reader'))
+      roleDropdown.appendChild(el('option', { value: 'editor' }, 'editor'))
+      roleDropdown.appendChild(el('option', { value: 'creator' }, 'creator'))
+      roleDropdown.appendChild(el('option', { value: 'administrator' }, 'administrator'))
+      roleDropdown.value = currentRole
+      
+      roleDropdown.onchange = async () => {
         try {
-          await api.updateUser(user.id, { roles: hasAdmin ? [] : ['admin'] })
-          pushToast('Updated', 'info')
+          const newRoles = roleDropdown.value ? [roleDropdown.value] : []
+          await api.updateUser(user.id, { roles: newRoles })
+          pushToast('Role updated', 'info')
           store.set({})
         } catch(e) {
           pushToast('Failed: ' + e.message, 'error')
+          roleDropdown.value = currentRole
         }
       }
-      actTd.appendChild(adminBtn)
+      actTd.appendChild(roleDropdown)
       
       const statusBtn = el('button', { class: 'btn-sm' }, 
         user.status === 1 ? 'disable' : 'enable')
@@ -957,7 +1279,7 @@ function UsersPage(){
       }
       actTd.appendChild(statusBtn)
       
-      const delBtn = el('button', { class: 'btn-sm btn-del' }, '×')
+      const delBtn = el('button', { class: 'btn-sm btn-del' }, 'del')
       delBtn.onclick = async () => {
         if (!confirm('Delete user ' + user.username + '?')) return
         try {

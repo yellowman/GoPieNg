@@ -54,8 +54,21 @@ mountApp(root)
     })
   }
   
-  // Network health monitoring - ping every 5 seconds
+  // Network health monitoring and change detection - poll every 5 seconds
   let networkOk = true
+  let lastKnownChange = null
+  
+  // Call this after user-initiated changes to prevent auto-refresh from re-rendering
+  window.syncLastChange = async () => {
+    try {
+      const r = await fetch('/api/pieng/ping', { cache: 'no-store' })
+      if (r.ok) {
+        const data = await r.json()
+        if (data.last_change) lastKnownChange = data.last_change
+      }
+    } catch(e) {}
+  }
+  
   async function checkNetwork() {
     const banner = document.getElementById('networkBanner')
     try {
@@ -64,13 +77,37 @@ mountApp(root)
         cache: 'no-store'
       })
       if (r.ok) {
+        const data = await r.json()
+        const wasOffline = !networkOk
+        
+        // Network is back
         if (!networkOk) {
           networkOk = true
           if (banner) banner.classList.add('hidden')
-          // Refresh data when network comes back
-          if (store.user) {
-            const list = await api.networks()
-            store.set({ networks: Array.isArray(list) ? list : [] })
+        }
+        
+        // Check if data changed or network just came back (refresh if logged in)
+        if (store.user) {
+          const shouldRefresh = wasOffline || 
+            (data.last_change && lastKnownChange !== null && data.last_change !== lastKnownChange)
+          
+          if (shouldRefresh) {
+            try {
+              const list = await api.networks()
+              const newNetworks = Array.isArray(list) ? list : []
+              // Only update if data actually changed AND we're not mid-search
+              // (search adds children to store.networks which would differ from root-only fetch)
+              const searchActive = window.searchState && window.searchState.matches && window.searchState.matches.length > 0
+              if (!searchActive && JSON.stringify(newNetworks) !== JSON.stringify(store.networks || [])) {
+                store.set({ networks: newNetworks })
+              }
+            } catch(e) {
+              // Ignore refresh errors
+            }
+          }
+          
+          if (data.last_change) {
+            lastKnownChange = data.last_change
           }
         }
       } else {
@@ -111,21 +148,6 @@ mountApp(root)
   }
   updateStatus()
   setInterval(updateStatus, 30000)
-  
-  // Auto-refresh data every 30 seconds to pick up changes from other users
-  async function autoRefresh() {
-    if (!store.user || !networkOk) return
-    try {
-      const list = await api.networks()
-      // Only update if data changed (simple length check to avoid unnecessary re-renders)
-      if (Array.isArray(list) && list.length !== store.networks?.length) {
-        store.set({ networks: list })
-      }
-    } catch(e) {
-      // Ignore errors - network check will handle connection issues
-    }
-  }
-  setInterval(autoRefresh, 30000)
 
   // Logout button
   const logoutBtn = document.getElementById('logoutBtn')
@@ -155,7 +177,8 @@ mountApp(root)
     }
     
     // Toggle admin class for showing admin-only UI
-    const isAdmin = (u?.roles || []).includes('admin')
+    const roles = u?.roles || []
+    const isAdmin = roles.includes('administrator')
     document.body.classList.toggle('is-admin', isAdmin)
     
     updateStatus() // Update status on auth change
@@ -195,4 +218,155 @@ mountApp(root)
   const initialPage = location.hash.replace('#', '') || 'browse'
   history.replaceState({ page: initialPage }, '', `#${initialPage}`)
   store.set({ currentPage: initialPage })
+  
+  // Global search wiring
+  const searchInput = document.getElementById('searchInput')
+  const searchInfo = document.getElementById('searchInfo')
+  const searchPrev = document.getElementById('searchPrev')
+  const searchNext = document.getElementById('searchNext')
+  const searchToggle = document.getElementById('searchToggle')
+  
+  // Search state - exposed globally for components.js
+  window.searchState = {
+    mode: 'hosts',
+    matches: [],
+    matchIndex: -1,
+    lastQuery: '',  // Track what was last searched
+    searching: false  // Prevent concurrent searches
+  }
+  
+  let navDebounce = null
+  
+  // Parse IP address to comparable number (supports IPv4)
+  function ipToNum(ip) {
+    if (!ip) return 0
+    // Extract IP from CIDR if present
+    const addr = ip.split('/')[0]
+    const parts = addr.split('.')
+    if (parts.length !== 4) return 0
+    // Use multiplication instead of bitwise to avoid signed int issues
+    return parseInt(parts[0]) * 16777216 + parseInt(parts[1]) * 65536 + 
+           parseInt(parts[2]) * 256 + parseInt(parts[3])
+  }
+  
+  // Sort search results by IP address to match tree order
+  function sortResultsByIP(results) {
+    return results.sort((a, b) => {
+      const ipA = a.type === 'network' ? a.address_range : a.address
+      const ipB = b.type === 'network' ? b.address_range : b.address
+      return ipToNum(ipA) - ipToNum(ipB)
+    })
+  }
+  
+  async function doSearch() {
+    const st = window.searchState
+    if (st.searching) return  // Already searching
+    
+    const q = searchInput.value.trim()
+    st.matches = []
+    st.matchIndex = -1
+    st.lastQuery = q
+    
+    if (!q || q.length < 2) {
+      searchInfo.textContent = q.length === 1 ? '...' : ''
+      return
+    }
+    
+    searchInfo.textContent = '...'
+    st.searching = true
+    
+    try {
+      const result = await api.search(q, st.mode)
+      st.matches = sortResultsByIP(result.results || [])
+      
+      if (st.matches.length === 0) {
+        searchInfo.textContent = '0'
+      } else {
+        st.matchIndex = 0
+        searchInfo.textContent = `1/${st.matches.length}`
+        if (window.goToSearchMatch) window.goToSearchMatch()
+      }
+    } catch(e) {
+      searchInfo.textContent = 'err'
+      console.error('Search error:', e)
+    } finally {
+      st.searching = false
+    }
+  }
+  
+  function navigateSearch(dir) {
+    const st = window.searchState
+    const currentQuery = searchInput.value.trim()
+    
+    // If searching, ignore
+    if (st.searching) return
+    
+    // If query changed, do a new search
+    if (currentQuery !== st.lastQuery) {
+      doSearch()
+      return
+    }
+    
+    // No results, trigger search
+    if (st.matches.length === 0) {
+      doSearch()
+      return
+    }
+    
+    // Update index immediately (mash-friendly)
+    st.matchIndex = (st.matchIndex + dir + st.matches.length) % st.matches.length
+    searchInfo.textContent = `${st.matchIndex + 1}/${st.matches.length}`
+    
+    // Debounce the actual navigation (which makes API calls)
+    clearTimeout(navDebounce)
+    navDebounce = setTimeout(() => {
+      if (window.goToSearchMatch) window.goToSearchMatch()
+    }, 200)
+  }
+  
+  // Toggle between hosts and networks mode
+  searchToggle.onclick = () => {
+    const st = window.searchState
+    clearTimeout(navDebounce)
+    if (st.mode === 'hosts') {
+      st.mode = 'networks'
+      searchToggle.classList.add('networks')
+      searchInput.placeholder = 'search networks'
+    } else {
+      st.mode = 'hosts'
+      searchToggle.classList.remove('networks')
+      searchInput.placeholder = 'search hosts'
+    }
+    // Clear current results when mode changes
+    st.matches = []
+    st.matchIndex = -1
+    st.lastQuery = ''
+    st.searching = false
+    searchInfo.textContent = ''
+  }
+  
+  searchPrev.onclick = () => navigateSearch(-1)
+  searchNext.onclick = () => navigateSearch(1)
+  
+  searchInput.onkeydown = (e) => {
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      navigateSearch(-1)
+    } else if (e.key === 'ArrowDown' || e.key === 'Enter') {
+      e.preventDefault()
+      navigateSearch(1)
+    } else if (e.key === 'Escape') {
+      clearTimeout(navDebounce)
+      searchInput.value = ''
+      window.searchState.matches = []
+      window.searchState.matchIndex = -1
+      window.searchState.lastQuery = ''
+      window.searchState.searching = false
+      searchInfo.textContent = ''
+      // Clear highlights
+      document.querySelectorAll('.search-match, .search-match-host').forEach(el => {
+        el.classList.remove('search-match', 'search-match-host')
+      })
+    }
+  }
 })();

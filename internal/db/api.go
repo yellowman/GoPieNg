@@ -4,15 +4,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
-	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/yellowman/GoPieNg/internal/auth"
-	"github.com/yellowman/GoPieNg/internal/ipam"
-	"github.com/yellowman/GoPieNg/internal/middleware"
+	"github.com/example/pieng-go-spa/internal/auth"
+	"github.com/example/pieng-go-spa/internal/ipam"
+	"github.com/example/pieng-go-spa/internal/middleware"
 )
 
 type Network struct{ ID int64; Parent sql.NullInt64; AddressRange string; Description sql.NullString; Subdivide bool; ValidMasks []int16; Owner, Account sql.NullString; Service sql.NullInt64 }
@@ -42,7 +43,27 @@ func isAdmin(r *http.Request) bool {
 	claims := middleware.GetClaims(r)
 	if claims == nil { return false }
 	for _, role := range claims.Roles {
-		if role == "admin" { return true }
+		if role == "administrator" { return true }
+	}
+	return false
+}
+
+// Check if user can create/delete networks (administrator or creator)
+func isCreator(r *http.Request) bool {
+	claims := middleware.GetClaims(r)
+	if claims == nil { return false }
+	for _, role := range claims.Roles {
+		if role == "administrator" || role == "creator" { return true }
+	}
+	return false
+}
+
+// Check if user can edit (administrator, creator, or editor)
+func isEditor(r *http.Request) bool {
+	claims := middleware.GetClaims(r)
+	if claims == nil { return false }
+	for _, role := range claims.Roles {
+		if role == "administrator" || role == "creator" || role == "editor" { return true }
 	}
 	return false
 }
@@ -125,28 +146,132 @@ func formatChangeLog(change, user string) string {
 	return result
 }
 
-func API(db *sql.DB, jwt any, pingCheck bool) http.Handler {
+func API(db *sql.DB, jwt any) http.Handler {
 	r := chi.NewRouter()
 
-	// Ping check endpoint (only if enabled)
-	if pingCheck {
-		r.Get("/ping/{ip}", func(w http.ResponseWriter, rq *http.Request) {
-			ip := chi.URLParam(rq, "ip")
-			// Validate IP format to prevent command injection
-			if strings.ContainsAny(ip, ";|&$`\\\"' \t\n") {
-				http.Error(w, "invalid IP", 400)
-				return
+	// Ping check endpoint - checks if IP responds
+	// Uses TCP connect since ICMP requires setuid which pledge disables
+	r.Get("/check-ip/{ip}", func(w http.ResponseWriter, rq *http.Request) {
+		ip := chi.URLParam(rq, "ip")
+		// Validate IP format to prevent abuse
+		if strings.ContainsAny(ip, ";|&$`\\\"' \t\n") {
+			http.Error(w, "invalid IP", 400)
+			return
+		}
+		// Try common ports to see if host is up
+		// Both SYN-ACK (open) and RST (closed) mean host is alive
+		responds := false
+		for _, port := range []string{"22", "80", "443", "23"} {
+			conn, err := net.DialTimeout("tcp", ip+":"+port, 1*time.Second)
+			if err == nil {
+				conn.Close()
+				responds = true
+				break
 			}
-			
-			// Run ping: 2 pings, 1 second timeout each
-			// Use -c 2 and check if at least 1 responds
-			cmd := exec.Command("ping", "-c", "2", "-W", "1", ip)
-			err := cmd.Run()
-			responds := err == nil
-			
-			writeJSON(w, map[string]any{"ip": ip, "responds": responds})
-		})
-	}
+			// "connection refused" = RST received = host is up
+			if strings.Contains(err.Error(), "refused") {
+				responds = true
+				break
+			}
+		}
+		writeJSON(w, map[string]any{"ip": ip, "responds": responds})
+	})
+
+	// Search endpoint - searches networks or hosts based on mode
+	r.Get("/search", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		mode := r.URL.Query().Get("mode") // "hosts" (default) or "networks"
+		if mode == "" {
+			mode = "hosts"
+		}
+		
+		if q == "" {
+			writeJSON(w, map[string]any{"results": []any{}})
+			return
+		}
+		
+		// Helper to get ancestry path (from root to parent)
+		getAncestry := func(netId int64) []int64 {
+			path := []int64{}
+			currentId := netId
+			for i := 0; i < 20; i++ { // safety limit
+				var parentId sql.NullInt64
+				err := db.QueryRow(`SELECT parent FROM networks WHERE id = $1`, currentId).Scan(&parentId)
+				if err != nil || !parentId.Valid {
+					break
+				}
+				path = append([]int64{parentId.Int64}, path...) // prepend
+				currentId = parentId.Int64
+			}
+			return path
+		}
+		
+		results := []map[string]any{}
+		
+		if mode == "networks" {
+			// Search networks - account is EXACT match, others are fuzzy
+			pattern := "%" + q + "%"
+			rows, err := db.Query(`
+				SELECT id, address_range::text, description, owner, account 
+				FROM networks 
+				WHERE address_range::text ILIKE $1 
+				   OR description ILIKE $1 
+				   OR owner ILIKE $1 
+				   OR account = $2
+				ORDER BY address_range
+				LIMIT 100`, pattern, q)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var id int64
+					var addr string
+					var desc, owner, account sql.NullString
+					rows.Scan(&id, &addr, &desc, &owner, &account)
+					results = append(results, map[string]any{
+						"type":          "network",
+						"id":            id,
+						"address_range": addr,
+						"description":   desc.String,
+						"owner":         owner.String,
+						"account":       account.String,
+						"ancestry":      getAncestry(id),
+					})
+				}
+			}
+		} else {
+			// Search hosts (default)
+			pattern := "%" + q + "%"
+			rows, err := db.Query(`
+				SELECT host(h.address), h.network, h.description, n.address_range::text
+				FROM hosts h
+				JOIN networks n ON h.network = n.id
+				WHERE host(h.address) ILIKE $1 
+				   OR h.description ILIKE $1
+				ORDER BY h.address
+				LIMIT 100`, pattern)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var addr string
+					var netId int64
+					var desc, netRange string
+					rows.Scan(&addr, &netId, &desc, &netRange)
+					ancestry := getAncestry(netId)
+					ancestry = append(ancestry, netId) // include the network itself
+					results = append(results, map[string]any{
+						"type":          "host",
+						"address":       addr,
+						"network_id":    netId,
+						"description":   desc,
+						"network_range": netRange,
+						"ancestry":      ancestry,
+					})
+				}
+			}
+		}
+		
+		writeJSON(w, map[string]any{"results": results})
+	})
 
 	r.Get("/networks", func(w http.ResponseWriter, r *http.Request){
 		q := r.URL.Query().Get("q")
@@ -215,6 +340,7 @@ func API(db *sql.DB, jwt any, pingCheck bool) http.Handler {
 	})
 
 	r.Patch("/networks/{id}", func(w http.ResponseWriter, r *http.Request){ 
+		if !isEditor(r) { http.Error(w, "forbidden", 403); return }
 		id, _ := strconv.ParseInt(chi.URLParam(r,"id"),10,64)
 		username := getUsername(r, db)
 		var req map[string]any
@@ -238,6 +364,8 @@ func API(db *sql.DB, jwt any, pingCheck bool) http.Handler {
 			i++ 
 		}
 		if v, ok := req["subdivide"].(bool); ok { 
+			// subdivide is admin-only (structural change)
+			if !isAdmin(r) { http.Error(w, "forbidden: admin only", 403); return }
 			fields = append(fields, fmt.Sprintf("subdivide=$%d", i))
 			vals = append(vals, v)
 			i++ 
@@ -248,6 +376,8 @@ func API(db *sql.DB, jwt any, pingCheck bool) http.Handler {
 			i++ 
 		}
 		if v, ok := req["valid_masks"]; ok { 
+			// valid_masks is admin-only
+			if !isAdmin(r) { http.Error(w, "forbidden: admin only", 403); return }
 			arr := ipam.InterfaceToSmallIntSlice(v)
 			fields = append(fields, fmt.Sprintf("valid_masks=$%d::smallint[]", i))
 			vals = append(vals, ipam.FormatSmallIntArray(arr))
@@ -271,6 +401,7 @@ func API(db *sql.DB, jwt any, pingCheck bool) http.Handler {
 	})
 
 	r.Delete("/networks/{id}", func(w http.ResponseWriter, r *http.Request){ 
+		if !isCreator(r) { http.Error(w, "forbidden", 403); return }
 		id, _ := strconv.ParseInt(chi.URLParam(r,"id"),10,64)
 		username := getUsername(r, db)
 		var cidr string
@@ -341,6 +472,7 @@ func API(db *sql.DB, jwt any, pingCheck bool) http.Handler {
 	})
 	
 	r.Post("/networks/{id}/hosts", func(w http.ResponseWriter, r *http.Request){ 
+		if !isEditor(r) { http.Error(w, "forbidden", 403); return }
 		id, _ := strconv.ParseInt(chi.URLParam(r,"id"),10,64)
 		username := getUsername(r, db)
 		var req struct{ Address, Description string; Update bool }
@@ -371,6 +503,7 @@ func API(db *sql.DB, jwt any, pingCheck bool) http.Handler {
 	})
 	
 	r.Delete("/hosts/{ip}", func(w http.ResponseWriter, r *http.Request){ 
+		if !isEditor(r) { http.Error(w, "forbidden", 403); return }
 		ip := chi.URLParam(r, "ip")
 		username := getUsername(r, db)
 		_, err := db.Exec(`DELETE FROM hosts WHERE address=$1::inet`, ip)
@@ -383,6 +516,7 @@ func API(db *sql.DB, jwt any, pingCheck bool) http.Handler {
 	})
 
 	r.Post("/networks/{id}/allocate-host", func(w http.ResponseWriter, r *http.Request){ 
+		if !isEditor(r) { http.Error(w, "forbidden", 403); return }
 		id, _ := strconv.ParseInt(chi.URLParam(r,"id"),10,64)
 		username := getUsername(r, db)
 		var req struct{ Description string `json:"description"` }
@@ -429,6 +563,7 @@ func API(db *sql.DB, jwt any, pingCheck bool) http.Handler {
 	})
 
 	r.Post("/networks/{id}/allocate-subnet", func(w http.ResponseWriter, r *http.Request){ 
+		if !isCreator(r) { http.Error(w, "forbidden", 403); return }
 		id, _ := strconv.ParseInt(chi.URLParam(r,"id"),10,64)
 		username := getUsername(r, db)
 		var req struct{ 

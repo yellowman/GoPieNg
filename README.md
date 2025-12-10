@@ -3,7 +3,7 @@
 A modern, tree-based IPAM (IP Address Management) system with a Go backend and vanilla JavaScript frontend.
 
 Derived from Tim Howe's PieNg. The latest version of the original is at:
-https://github.com/thowe/MoPieNg
+https://github.com/yellowman/GoPieNg
 
 ## Features
 
@@ -168,7 +168,6 @@ On OpenBSD, the server automatically restricts itself using pledge:
 | `-socket` | (none) | Unix socket path for FastCGI |
 | `-no-static` | false | Disable static file serving |
 | `-webroot` | `web` | Path to web directory |
-| `-ping-check` | false | Enable ping check for new IP allocations |
 
 ## Coming from old PieNg?
 

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"database/sql"
+	"encoding/json"
 	"flag"
 	"log"
 	"net"
@@ -15,9 +17,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/yellowman/GoPieNg/internal/auth"
-	"github.com/yellowman/GoPieNg/internal/db"
-	"github.com/yellowman/GoPieNg/internal/middleware"
+	"github.com/example/pieng-go-spa/internal/auth"
+	"github.com/example/pieng-go-spa/internal/db"
+	"github.com/example/pieng-go-spa/internal/middleware"
 )
 
 var (
@@ -26,7 +28,6 @@ var (
 	flagNoStatic  = flag.Bool("no-static", false, "Disable static file serving (API only mode)")
 	flagAddr      = flag.String("addr", "", "Listen address (overrides PIENG_ADDR)")
 	flagWebRoot   = flag.String("webroot", "web", "Path to web directory")
-	flagPingCheck = flag.Bool("ping-check", false, "Enable ping check for new IP allocations")
 )
 
 func main() {
@@ -69,7 +70,7 @@ func main() {
 	jwt := auth.NewManager([]byte(secret))
 
 	// Build router
-	r := buildRouter(database, jwt, *flagNoStatic, *flagWebRoot, *flagPingCheck)
+	r := buildRouter(database, jwt, *flagNoStatic, *flagWebRoot)
 
 	// Pledge on OpenBSD (no-op on other systems)
 	pledge()
@@ -82,7 +83,7 @@ func main() {
 	}
 }
 
-func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot string, pingCheck bool) *chi.Mux {
+func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot string) *chi.Mux {
 	r := chi.NewRouter()
 
 	// Security middleware
@@ -92,7 +93,7 @@ func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot stri
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.Timeout(30 * time.Second))
 	r.Use(securityHeaders)
-	r.Use(rateLimiter(100, time.Minute)) // 100 req/min per IP
+	r.Use(rateLimiter(300, time.Minute)) // 300 req/min per IP
 
 	// CORS - restrictive by default
 	allowedOrigins := strings.Split(os.Getenv("PIENG_CORS_ORIGINS"), ",")
@@ -140,14 +141,20 @@ func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot stri
 		api.Post("/auth/login", auth.MakeLoginHandler(database.DB, jwt))
 		api.Get("/ping", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"status":"ok"}`))
+			var lastID sql.NullInt64
+			database.DB.QueryRow(`SELECT id FROM changelog ORDER BY id DESC LIMIT 1`).Scan(&lastID)
+			if lastID.Valid {
+				json.NewEncoder(w).Encode(map[string]any{"status": "ok", "last_change": lastID.Int64})
+			} else {
+				json.NewEncoder(w).Encode(map[string]any{"status": "ok", "last_change": 0})
+			}
 		})
 
 		// Authenticated
 		api.Group(func(priv chi.Router) {
 			priv.Use(middleware.JWT(jwt))
 			priv.Get("/me", auth.MeHandler(database.DB, jwt))
-			priv.Mount("/", db.API(database.DB, jwt, pingCheck))
+			priv.Mount("/", db.API(database.DB, jwt))
 		})
 	})
 

@@ -66,25 +66,21 @@ CREATE TABLE IF NOT EXISTS changelog (
 -- Index for recent changes
 CREATE INDEX IF NOT EXISTS idx_changelog_time ON changelog(change_time DESC);
 
--- Default roles
-INSERT INTO roles (name) VALUES ('admin') ON CONFLICT DO NOTHING;
-INSERT INTO roles (name) VALUES ('user') ON CONFLICT DO NOTHING;
+-- Default roles (matching original PieNg)
+INSERT INTO roles (name) VALUES ('administrator') ON CONFLICT DO NOTHING;
+INSERT INTO roles (name) VALUES ('creator') ON CONFLICT DO NOTHING;
+INSERT INTO roles (name) VALUES ('editor') ON CONFLICT DO NOTHING;
+INSERT INTO roles (name) VALUES ('reader') ON CONFLICT DO NOTHING;
 
 -- ============================================
--- Migration: for existing PieNg databases
+-- Migration: for new databases without users
 -- ============================================
 
--- If using an existing PieNg database, run these migrations:
-
--- 1. Ensure required roles exist (needed for user management)
-INSERT INTO roles (name) VALUES ('admin') ON CONFLICT DO NOTHING;
-INSERT INTO roles (name) VALUES ('user') ON CONFLICT DO NOTHING;
-
--- 2. Grant admin role to existing admin user (adjust username as needed)
-INSERT INTO user_roles ("user", role)
-SELECT u.id, r.id FROM users u, roles r 
-WHERE u.username = 'admin' AND r.name = 'admin'
-ON CONFLICT DO NOTHING;
+-- Grant administrator role to existing admin user (adjust username as needed)
+-- INSERT INTO user_roles ("user", role)
+-- SELECT u.id, r.id FROM users u, roles r 
+-- WHERE u.username = 'admin' AND r.name = 'administrator'
+-- ON CONFLICT DO NOTHING;
 
 -- ============================================
 -- Useful queries

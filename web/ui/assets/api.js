@@ -63,7 +63,19 @@ export const api = {
   availableSubnetsAt: (nid, mask) => _fetch(API+`/networks/${nid}/available-subnets?mask=${mask}`, authed()),
   // New: allocate specific subnet with subdivide option
   allocSubnetAt: (nid, cidr, description, subdivide) => _fetch(API+`/networks/${nid}/allocate-subnet`, authed({ method:'POST', body: JSON.stringify({ cidr, description: description || '', subdivide }) })),
-  pingCheck: (ip) => _fetch(API+`/ping/${encodeURIComponent(ip)}`, authed()).catch(() => null),
+  pingCheck: (ip) => {
+    return _fetch(API+`/check-ip/${encodeURIComponent(ip)}`, authed())
+      .then(result => {
+        console.log('Ping check for', ip, ':', result)
+        return result
+      })
+      .catch(e => {
+        // 404 means server doesn't have -ping-check enabled
+        console.log('Ping check not available:', e.message)
+        return null
+      })
+  },
+  search: (q, mode = 'hosts') => _fetch(API+`/search?q=${encodeURIComponent(q)}&mode=${mode}`, authed()),
   logs: (limit=50) => _fetch(API+`/logs?limit=${limit}`, authed()),
   // User management
   users: () => _fetch(API+'/users', authed()),
