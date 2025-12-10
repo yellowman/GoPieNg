@@ -1,4 +1,5 @@
 # GoPieNg - IP Address Management
+![Screenshot](screenshot.png)
 
 A modern, tree-based IPAM (IP Address Management) system with a Go backend and vanilla JavaScript frontend.
 
