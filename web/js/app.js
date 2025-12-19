@@ -1,6 +1,6 @@
-import { api, auth } from './api.js'
-import { store } from './store.js'
-import { mountApp, setResetScroll } from './components.js'
+import { api, auth } from './api.js?v=9'
+import { store } from './store.js?v=9'
+import { mountApp, setResetScroll } from './components.js?v=9'
 
 const root = document.getElementById('app')
 
@@ -102,18 +102,8 @@ mountApp(root)
             try {
               const list = await api.networks()
               const newNetworks = Array.isArray(list) ? list : []
-              // Compare root networks only (store may have cached children)
-              const currentRoots = (store.networks || []).filter(n => !n.parent)
-              
-              // Compare by key fields to avoid false positives from field ordering
-              const serialize = nets => nets.map(n => 
-                `${n.id}|${n.address_range}|${n.description||''}|${n.owner||''}|${n.account||''}`
-              ).sort().join('\n')
-              
-              if (serialize(newNetworks) !== serialize(currentRoots)) {
-                // Data actually changed - scroll preserved automatically
-                store.set({ networks: newNetworks })
-              }
+              // Always update when last_change differs - hosts may have changed
+              store.set({ networks: newNetworks })
             } catch(e) {
               // Ignore refresh errors
             }
@@ -194,6 +184,12 @@ mountApp(root)
     const roles = u?.roles || []
     const isAdmin = roles.includes('administrator')
     document.body.classList.toggle('is-admin', isAdmin)
+    
+    // Update Users/User nav link text
+    const usersLink = document.getElementById('usersNavLink')
+    if (usersLink) {
+      usersLink.textContent = isAdmin ? 'Users' : 'User'
+    }
     
     updateStatus() // Update status on auth change
     

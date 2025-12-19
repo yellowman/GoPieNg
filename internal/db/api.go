@@ -811,26 +811,38 @@ func API(db *sql.DB, jwt any) http.Handler {
 	})
 
 	r.Patch("/users/{id}", func(w http.ResponseWriter, r *http.Request){
-		if !isAdmin(r) { 
-			http.Error(w, "admin required", 403)
-			return 
-		}
 		id, _ := strconv.ParseInt(chi.URLParam(r,"id"),10,64)
+		claims := r.Context().Value(middleware.ClaimsKey).(*auth.Claims)
+		isSelf := claims.UserID == id
+		isAdm := isAdmin(r)
+		
+		// Must be admin OR updating own record
+		if !isAdm && !isSelf {
+			http.Error(w, "forbidden", 403)
+			return
+		}
+		
 		var req struct{ Password string; Status *int; Roles []string }
 		json.NewDecoder(r.Body).Decode(&req)
+		
+		// Password: admin can change anyone, users can change own
 		if req.Password != "" {
 			hash := auth.MakeRFC2307SSHA(req.Password)
 			db.Exec(`UPDATE users SET password=$1 WHERE id=$2`, hash, id)
 		}
-		if req.Status != nil {
-			db.Exec(`UPDATE users SET status=$1 WHERE id=$2`, *req.Status, id)
-		}
-		if req.Roles != nil {
-			db.Exec(`DELETE FROM user_roles WHERE "user"=$1`, id)
-			for _, role := range req.Roles {
-				var rid int64
-				if err := db.QueryRow(`SELECT id FROM roles WHERE name=$1`, role).Scan(&rid); err == nil {
-					db.Exec(`INSERT INTO user_roles("user", role) VALUES($1, $2)`, id, rid)
+		
+		// Status and Roles: admin only
+		if isAdm {
+			if req.Status != nil {
+				db.Exec(`UPDATE users SET status=$1 WHERE id=$2`, *req.Status, id)
+			}
+			if req.Roles != nil {
+				db.Exec(`DELETE FROM user_roles WHERE "user"=$1`, id)
+				for _, role := range req.Roles {
+					var rid int64
+					if err := db.QueryRow(`SELECT id FROM roles WHERE name=$1`, role).Scan(&rid); err == nil {
+						db.Exec(`INSERT INTO user_roles("user", role) VALUES($1, $2)`, id, rid)
+					}
 				}
 			}
 		}
@@ -843,8 +855,14 @@ func API(db *sql.DB, jwt any) http.Handler {
 			return 
 		}
 		id, _ := strconv.ParseInt(chi.URLParam(r,"id"),10,64)
+		// Clear changelog references (preserve audit history with NULL user)
+		db.Exec(`UPDATE changelog SET "user"=NULL WHERE "user"=$1`, id)
 		db.Exec(`DELETE FROM user_roles WHERE "user"=$1`, id)
-		db.Exec(`DELETE FROM users WHERE id=$1`, id)
+		_, err := db.Exec(`DELETE FROM users WHERE id=$1`, id)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
 		writeJSON(w, map[string]any{"status": "ok"})
 	})
 

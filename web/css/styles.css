@@ -86,6 +86,7 @@ html, body {
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
   font-size: 0.85rem;
+  touch-action: manipulation;
 }
 
 .app-header nav a:hover { color: var(--text-0); }
@@ -268,6 +269,7 @@ button {
   cursor: pointer;
   font-size: 0.85rem;
   transition: all 0.15s;
+  touch-action: manipulation; /* Prevent double-tap delay on mobile */
 }
 
 button:hover {
@@ -367,6 +369,7 @@ a:hover { text-decoration: underline; }
   font-size: 10px;
   padding: 0;
   flex-shrink: 0;
+  touch-action: manipulation;
 }
 .tree-toggle:hover { color: var(--text-0); }
 .tree-toggle.leaf-dot { cursor: default; color: var(--text-2); font-size: 8px; }
@@ -1128,10 +1131,236 @@ body:has(.network-banner:not(.hidden)) .app-header {
    ============================================ */
 
 @media (max-width: 768px) {
-  .app-header { padding: 0 1rem; gap: 1rem; }
-  .main-content { padding: 1rem; }
-  .tree-cidr { min-width: 100px; font-size: 0.85rem; }
-  .btn-action { padding: 0.5rem 1rem; min-width: 60px; }
-  .alloc-bar { padding: 0.5rem; }
-  .alloc-desc { max-width: 100%; }
+  /* Header - stack search below nav */
+  .app-header {
+    flex-wrap: wrap;
+    padding: 0.5rem 1rem;
+    gap: 0.5rem;
+  }
+  
+  .app-header nav {
+    order: 1;
+    gap: 0.5rem;
+  }
+  
+  .app-header nav a {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+  }
+  
+  .header-search {
+    order: 3;
+    width: 100%;
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+  
+  .header-search .search-input {
+    flex: 1;
+    min-width: 120px;
+  }
+  
+  .header-right {
+    order: 2;
+    gap: 0.5rem;
+  }
+  
+  .header-right .status {
+    display: none; /* Hide status on mobile */
+  }
+  
+  .user-badge {
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
+  /* Main content */
+  .main-content {
+    padding: 0.75rem;
+  }
+  
+  /* Tree - horizontal scroll */
+  .tree {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  .tree-row {
+    min-width: max-content;
+    padding: 0.5rem 0.25rem;
+  }
+  
+  .tree-cidr {
+    min-width: 90px;
+    font-size: 0.8rem;
+  }
+  
+  .tree-desc {
+    min-width: 100px;
+    max-width: 150px;
+  }
+  
+  /* Hide owner/account on mobile - too cramped */
+  .tree-owner, .tree-account {
+    display: none;
+  }
+  
+  /* Larger touch targets for buttons */
+  .btn-action {
+    min-width: 50px;
+    min-height: 36px;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.75rem;
+  }
+  
+  .tree-toggle {
+    width: 24px;
+    height: 24px;
+    font-size: 0.7rem;
+  }
+  
+  .btn-settings {
+    min-width: 36px;
+    min-height: 36px;
+  }
+  
+  /* Allocation bar - stack vertically */
+  .alloc-bar {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0.5rem;
+    gap: 0.5rem;
+  }
+  
+  .alloc-desc {
+    max-width: 100%;
+    width: 100%;
+  }
+  
+  .alloc-btns {
+    flex-wrap: wrap;
+  }
+  
+  .alloc-btns button {
+    min-height: 40px;
+    padding: 0.5rem 1rem;
+  }
+  
+  /* Host panel - stack form */
+  .host-header {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
+  .host-form {
+    flex-direction: column;
+    width: 100%;
+    gap: 0.5rem;
+  }
+  
+  .host-form input {
+    width: 100%;
+    max-width: none;
+  }
+  
+  .host-form .btn-add {
+    width: 100%;
+    min-height: 40px;
+  }
+  
+  .btn-edit-mode {
+    align-self: flex-end;
+  }
+  
+  /* Host table */
+  .host-table {
+    font-size: 0.85rem;
+  }
+  
+  .host-addr {
+    min-width: 90px;
+  }
+  
+  .btn-del {
+    min-width: 40px;
+    min-height: 32px;
+  }
+  
+  /* Modals - full width */
+  .warning-modal, .confirm-modal {
+    width: 90%;
+    max-width: 90%;
+    padding: 1.5rem;
+    font-size: 1rem;
+  }
+  
+  .confirm-buttons {
+    flex-direction: column-reverse;
+    gap: 0.75rem;
+  }
+  
+  .confirm-buttons button {
+    width: 100%;
+    min-height: 44px;
+  }
+  
+  /* Settings panel */
+  .settings-panel {
+    padding: 0.75rem;
+  }
+  
+  .mask-grid {
+    gap: 0.25rem;
+  }
+  
+  .mask-option {
+    min-height: 36px;
+  }
+  
+  /* Login page */
+  .login-card {
+    width: 95%;
+    max-width: 95%;
+    padding: 1.5rem;
+  }
+  
+  /* Users page */
+  .user-form {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
+  .user-form input, .user-form select, .user-form button {
+    width: 100%;
+    min-height: 40px;
+  }
+  
+  .users-list table {
+    font-size: 0.8rem;
+  }
+  
+  .user-actions {
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  
+  .role-select, .btn-sm {
+    min-height: 32px;
+  }
+}
+
+/* Extra small screens */
+@media (max-width: 480px) {
+  .tree-desc {
+    max-width: 100px;
+  }
+  
+  .search-info {
+    display: none;
+  }
+  
+  .search-toggle {
+    margin-right: 0.5rem;
+  }
 }

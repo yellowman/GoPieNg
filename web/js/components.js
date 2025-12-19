@@ -1,6 +1,6 @@
-import { api, auth } from './api.js'
-import { store } from './store.js'
-import { $, $$, el, notify, pushToast, showWarningModal, showConfirmModal } from './util.js'
+import { api, auth } from './api.js?v=9'
+import { store } from './store.js?v=9'
+import { $, $$, el, notify, pushToast, showWarningModal, showConfirmModal } from './util.js?v=9'
 
 // Track expanded nodes
 const expanded = new Set()
@@ -60,6 +60,12 @@ function render(root){
   const savedScroll = resetScrollOnRender ? 0 : window.scrollY
   resetScrollOnRender = false
   
+  // Prevent height collapse by setting min-height before clearing
+  const currentHeight = root.offsetHeight
+  if (currentHeight > 0) {
+    root.style.minHeight = currentHeight + 'px'
+  }
+  
   try {
     root.innerHTML = ''
     const st = store
@@ -75,8 +81,11 @@ function render(root){
     root.innerHTML = `<div class="card" style="margin:2rem"><h2>Error</h2><p>${e.message}</p></div>`
   }
   
-  // Restore scroll after DOM is built
-  window.scrollTo(0, savedScroll)
+  // Restore scroll and clear min-height after layout
+  requestAnimationFrame(() => {
+    window.scrollTo(0, savedScroll)
+    root.style.minHeight = ''
+  })
 }
 
 // Call this before store.set when navigation should reset scroll
@@ -1189,133 +1198,185 @@ function HostRow(host, network, panel){
 
 function UsersPage(){
   const card = el('div', { class: 'card' })
-  card.appendChild(el('h2', {}, 'User Management'))
   
-  if (!isAdmin()) {
-    card.appendChild(el('div', { class: 'sub' }, 'Admin access required'))
+  // Make sure we have user info
+  if (!store.user) {
+    card.appendChild(el('div', { class: 'sub' }, 'Not logged in'))
     return card
   }
   
-  // Add user form
-  const addForm = el('div', { class: 'user-form' })
-  const userInput = el('input', { type: 'text', placeholder: 'Username' })
-  const passInput = el('input', { type: 'password', placeholder: 'Password' })
-  const roleSelect = el('select')
-  roleSelect.appendChild(el('option', { value: '' }, 'reader'))
-  roleSelect.appendChild(el('option', { value: 'editor' }, 'editor'))
-  roleSelect.appendChild(el('option', { value: 'creator' }, 'creator'))
-  roleSelect.appendChild(el('option', { value: 'administrator' }, 'administrator'))
-  const addBtn = el('button', { class: 'primary' }, 'Add User')
-  
-  addBtn.onclick = async () => {
-    if (!userInput.value.trim() || !passInput.value.trim()) {
-      pushToast('Username and password required', 'error')
-      return
+  if (isAdmin()) {
+    // Admin view: full user management
+    card.appendChild(el('h2', {}, 'User Management'))
+    
+    // Add user form
+    const addForm = el('div', { class: 'user-form' })
+    const userInput = el('input', { type: 'text', placeholder: 'Username' })
+    const passInput = el('input', { type: 'password', placeholder: 'Password' })
+    const roleSelect = el('select')
+    roleSelect.appendChild(el('option', { value: '' }, 'reader'))
+    roleSelect.appendChild(el('option', { value: 'editor' }, 'editor'))
+    roleSelect.appendChild(el('option', { value: 'creator' }, 'creator'))
+    roleSelect.appendChild(el('option', { value: 'administrator' }, 'administrator'))
+    const addBtn = el('button', { class: 'primary' }, 'Add User')
+    
+    addBtn.onclick = async () => {
+      if (!userInput.value.trim() || !passInput.value.trim()) {
+        pushToast('Username and password required', 'error')
+        return
+      }
+      try {
+        const roles = roleSelect.value ? [roleSelect.value] : []
+        await api.createUser(userInput.value.trim(), passInput.value, roles)
+        userInput.value = ''
+        passInput.value = ''
+        roleSelect.value = ''
+        pushToast('User created', 'info')
+        store.set({})
+      } catch(e) {
+        pushToast('Failed: ' + e.message, 'error')
+      }
     }
-    try {
-      const roles = roleSelect.value ? [roleSelect.value] : []
-      await api.createUser(userInput.value.trim(), passInput.value, roles)
-      userInput.value = ''
-      passInput.value = ''
-      roleSelect.value = ''
-      pushToast('User created', 'info')
-      store.set({})
-    } catch(e) {
-      pushToast('Failed: ' + e.message, 'error')
+    
+    addForm.appendChild(userInput)
+    addForm.appendChild(passInput)
+    addForm.appendChild(roleSelect)
+    addForm.appendChild(addBtn)
+    card.appendChild(addForm)
+    
+    // Users list
+    const container = el('div', { class: 'users-list' })
+    card.appendChild(container)
+    
+    api.users().then(users => {
+      if (!users || users.length === 0) {
+        container.appendChild(el('div', { class: 'sub' }, 'No users'))
+        return
+      }
+      
+      const table = el('table')
+      const thead = el('thead')
+      thead.appendChild(el('tr', {},
+        el('th', {}, 'Username'),
+        el('th', {}, 'Roles'),
+        el('th', {}, 'Status'),
+        el('th', {}, 'Actions')
+      ))
+      table.appendChild(thead)
+      
+      const tbody = el('tbody')
+      for (const user of users) {
+        const tr = el('tr')
+        tr.appendChild(el('td', {}, user.username))
+        tr.appendChild(el('td', {}, (user.roles || []).join(', ') || 'reader'))
+        tr.appendChild(el('td', {}, user.status === 1 ? 'active' : 'disabled'))
+        
+        const actTd = el('td', { class: 'user-actions' })
+        
+        // Role dropdown
+        const currentRole = (user.roles || [])[0] || ''
+        const roleDropdown = el('select', { class: 'role-select' })
+        roleDropdown.appendChild(el('option', { value: '' }, 'reader'))
+        roleDropdown.appendChild(el('option', { value: 'editor' }, 'editor'))
+        roleDropdown.appendChild(el('option', { value: 'creator' }, 'creator'))
+        roleDropdown.appendChild(el('option', { value: 'administrator' }, 'administrator'))
+        roleDropdown.value = currentRole
+        
+        roleDropdown.onchange = async () => {
+          try {
+            const newRoles = roleDropdown.value ? [roleDropdown.value] : []
+            await api.updateUser(user.id, { roles: newRoles })
+            pushToast('Role updated', 'info')
+            store.set({})
+          } catch(e) {
+            pushToast('Failed: ' + e.message, 'error')
+            roleDropdown.value = currentRole
+          }
+        }
+        actTd.appendChild(roleDropdown)
+        
+        const statusBtn = el('button', { class: 'btn-sm' }, 
+          user.status === 1 ? 'disable' : 'enable')
+        statusBtn.onclick = async () => {
+          try {
+            await api.updateUser(user.id, { status: user.status === 1 ? 0 : 1 })
+            pushToast('Updated', 'info')
+            store.set({})
+          } catch(e) {
+            pushToast('Failed: ' + e.message, 'error')
+          }
+        }
+        actTd.appendChild(statusBtn)
+        
+        const delBtn = el('button', { class: 'btn-sm btn-del' }, 'del')
+        delBtn.onclick = async () => {
+          const confirmed = await showConfirmModal('Delete user ' + user.username + '?')
+          if (!confirmed) return
+          try {
+            await api.deleteUser(user.id)
+            pushToast('Deleted', 'info')
+            store.set({})
+          } catch(e) {
+            pushToast('Failed: ' + e.message, 'error')
+          }
+        }
+        actTd.appendChild(delBtn)
+        
+        tr.appendChild(actTd)
+        tbody.appendChild(tr)
+      }
+      table.appendChild(tbody)
+      container.appendChild(table)
+    }).catch(e => {
+      container.appendChild(el('div', { class: 'sub' }, 'Failed: ' + e.message))
+    })
+  } else {
+    // Non-admin view: change own password only
+    card.appendChild(el('h2', {}, 'Change Password'))
+    
+    const form = el('div', { class: 'user-form' })
+    const currentPass = el('input', { type: 'password', placeholder: 'Current password' })
+    const newPass = el('input', { type: 'password', placeholder: 'New password' })
+    const confirmPass = el('input', { type: 'password', placeholder: 'Confirm new password' })
+    const saveBtn = el('button', { class: 'primary' }, 'Change Password')
+    
+    saveBtn.onclick = async () => {
+      if (!newPass.value.trim()) {
+        pushToast('New password required', 'error')
+        return
+      }
+      if (newPass.value !== confirmPass.value) {
+        pushToast('Passwords do not match', 'error')
+        return
+      }
+      if (!store.user?.id) {
+        pushToast('User ID not available', 'error')
+        return
+      }
+      try {
+        await api.updateUser(store.user.id, { password: newPass.value })
+        currentPass.value = ''
+        newPass.value = ''
+        confirmPass.value = ''
+        pushToast('Password changed', 'info')
+      } catch(e) {
+        pushToast('Failed: ' + e.message, 'error')
+      }
     }
+    
+    form.appendChild(currentPass)
+    form.appendChild(newPass)
+    form.appendChild(confirmPass)
+    form.appendChild(saveBtn)
+    card.appendChild(form)
+    
+    // Show current role (read-only)
+    const roles = store.user?.roles || []
+    const roleText = roles.length > 0 ? roles.join(', ') : 'reader'
+    const roleInfo = el('div', { class: 'sub', style: 'margin-top: 1rem;' }, 
+      `Your role: ${roleText}`)
+    card.appendChild(roleInfo)
   }
-  
-  addForm.appendChild(userInput)
-  addForm.appendChild(passInput)
-  addForm.appendChild(roleSelect)
-  addForm.appendChild(addBtn)
-  card.appendChild(addForm)
-  
-  // Users list
-  const container = el('div', { class: 'users-list' })
-  card.appendChild(container)
-  
-  api.users().then(users => {
-    if (!users || users.length === 0) {
-      container.appendChild(el('div', { class: 'sub' }, 'No users'))
-      return
-    }
-    
-    const table = el('table')
-    const thead = el('thead')
-    thead.appendChild(el('tr', {},
-      el('th', {}, 'Username'),
-      el('th', {}, 'Roles'),
-      el('th', {}, 'Status'),
-      el('th', {}, 'Actions')
-    ))
-    table.appendChild(thead)
-    
-    const tbody = el('tbody')
-    for (const user of users) {
-      const tr = el('tr')
-      tr.appendChild(el('td', {}, user.username))
-      tr.appendChild(el('td', {}, (user.roles || []).join(', ') || 'reader'))
-      tr.appendChild(el('td', {}, user.status === 1 ? 'active' : 'disabled'))
-      
-      const actTd = el('td', { class: 'user-actions' })
-      
-      // Role dropdown
-      const currentRole = (user.roles || [])[0] || ''
-      const roleDropdown = el('select', { class: 'role-select' })
-      roleDropdown.appendChild(el('option', { value: '' }, 'reader'))
-      roleDropdown.appendChild(el('option', { value: 'editor' }, 'editor'))
-      roleDropdown.appendChild(el('option', { value: 'creator' }, 'creator'))
-      roleDropdown.appendChild(el('option', { value: 'administrator' }, 'administrator'))
-      roleDropdown.value = currentRole
-      
-      roleDropdown.onchange = async () => {
-        try {
-          const newRoles = roleDropdown.value ? [roleDropdown.value] : []
-          await api.updateUser(user.id, { roles: newRoles })
-          pushToast('Role updated', 'info')
-          store.set({})
-        } catch(e) {
-          pushToast('Failed: ' + e.message, 'error')
-          roleDropdown.value = currentRole
-        }
-      }
-      actTd.appendChild(roleDropdown)
-      
-      const statusBtn = el('button', { class: 'btn-sm' }, 
-        user.status === 1 ? 'disable' : 'enable')
-      statusBtn.onclick = async () => {
-        try {
-          await api.updateUser(user.id, { status: user.status === 1 ? 0 : 1 })
-          pushToast('Updated', 'info')
-          store.set({})
-        } catch(e) {
-          pushToast('Failed: ' + e.message, 'error')
-        }
-      }
-      actTd.appendChild(statusBtn)
-      
-      const delBtn = el('button', { class: 'btn-sm btn-del' }, 'del')
-      delBtn.onclick = async () => {
-        if (!confirm('Delete user ' + user.username + '?')) return
-        try {
-          await api.deleteUser(user.id)
-          pushToast('Deleted', 'info')
-          store.set({})
-        } catch(e) {
-          pushToast('Failed: ' + e.message, 'error')
-        }
-      }
-      actTd.appendChild(delBtn)
-      
-      tr.appendChild(actTd)
-      tbody.appendChild(tr)
-    }
-    table.appendChild(tbody)
-    container.appendChild(table)
-  }).catch(e => {
-    container.appendChild(el('div', { class: 'sub' }, 'Failed: ' + e.message))
-  })
   
   return card
 }

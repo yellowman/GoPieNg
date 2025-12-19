@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
 -- Matches original PieNg schema with "user" FK to users table
 CREATE TABLE IF NOT EXISTS changelog (
     id SERIAL PRIMARY KEY,
-    "user" INTEGER NOT NULL REFERENCES users(id),
+    "user" INTEGER REFERENCES users(id) ON DELETE SET NULL,
     change_time TIMESTAMP NOT NULL DEFAULT NOW(),
     prefix INET NOT NULL,
     change TEXT NOT NULL
@@ -81,6 +81,16 @@ INSERT INTO roles (name) VALUES ('reader') ON CONFLICT DO NOTHING;
 -- SELECT u.id, r.id FROM users u, roles r 
 -- WHERE u.username = 'admin' AND r.name = 'administrator'
 -- ON CONFLICT DO NOTHING;
+
+-- ============================================
+-- Migration notes for existing databases
+-- ============================================
+
+-- If upgrading from an older schema, run this to allow user deletion:
+-- ALTER TABLE changelog ALTER COLUMN "user" DROP NOT NULL;
+-- ALTER TABLE changelog DROP CONSTRAINT IF EXISTS changelog_user_fkey;
+-- ALTER TABLE changelog ADD CONSTRAINT changelog_user_fkey 
+--     FOREIGN KEY ("user") REFERENCES users(id) ON DELETE SET NULL;
 
 -- ============================================
 -- Useful queries

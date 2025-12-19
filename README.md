@@ -11,11 +11,15 @@ https://gitlab.com/thowe/MoPieNg
 - Tree-based network browser - Expandable hierarchy, no page navigation needed
 - Inline editing - Click any description or owner to edit it in place
 - Smart allocation - Recommends larger blocks (green) vs smaller blocks (muted)
-- Configurable allocation sizes - Admins can edit allowed subnet masks per network
+- Configurable allocation sizes - Administrators can edit allowed subnet masks per network
 - Full audit trail - All changes logged with username and timestamp
-- User management - Admin users can create/manage other users and assign roles
+- User management - Administrators can create/manage other users and assign roles
 - Dark/light mode - Toggle in header, persists across sessions
 - Browser history - Back/forward buttons work as expected
+
+## Migration from PieNg
+
+Follow migration comments in schema.sql
 
 ## Quick Start
 
@@ -28,11 +32,11 @@ export PIENG_JWT_SECRET='your-secret-key-at-least-32-characters'
 go build -o bin/pieng ./cmd/server
 
 # Run as FastCGI (default) - for use behind nginx/httpd
-./bin/pieng -socket /var/run/pieng.sock
+./bin/pieng -socket /var/www/run/pieng.sock
 
 # Or run as standalone HTTP server for development
 ./bin/pieng -web
-# Open http://localhost:8080/ui
+# Open http://localhost:8080
 ```
 
 ## Server Modes
@@ -43,7 +47,7 @@ For integration with nginx, httpd, or other web servers:
 
 ```bash
 # Unix socket (recommended)
-./bin/pieng -socket /var/run/pieng.sock
+./bin/pieng -socket /var/www/run/pieng.sock
 
 # TCP socket
 ./bin/pieng -addr 127.0.0.1:9000
@@ -65,7 +69,7 @@ PIENG_ADDR=:8080 ./bin/pieng -web     # Via environment
 Disable static file serving when using a separate web server for assets:
 
 ```bash
-./bin/pieng -no-static -socket /var/run/pieng.sock
+./bin/pieng -no-static -socket /var/www/run/pieng.sock
 ```
 
 ## nginx Configuration Example
@@ -79,15 +83,15 @@ server {
     listen 443 ssl http2;
     server_name ipam.example.com;
     
+    root /var/www/pieng/web;
+    
     # Static files served by nginx
-    location /static/ {
-        alias /var/www/pieng/web/static/;
+    location /css/ {
         expires 1h;
     }
     
-    location /ui {
-        alias /var/www/pieng/web/ui/;
-        try_files $uri /ui/index.html;
+    location /js/ {
+        expires 1h;
     }
     
     # API via FastCGI
@@ -95,6 +99,11 @@ server {
         include fastcgi_params;
         fastcgi_pass pieng;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+    
+    # SPA - serve index.html for all other routes
+    location / {
+        try_files $uri /index.html;
     }
 }
 ```
@@ -104,21 +113,22 @@ server {
 ```
 server "ipam.example.com" {
     listen on * tls port 443
+    root "/var/www/pieng/web"
     
     location "/api/pieng/*" {
         fastcgi socket "/var/run/pieng.sock"
     }
     
-    location "/static/*" {
-        root "/var/www/pieng/web"
+    location "/*.css" {
+        pass
     }
     
-    location "/ui/*" {
-        root "/var/www/pieng/web"
+    location "/*.js" {
+        pass
     }
     
-    location "/" {
-        block return 302 "/ui"
+    location "/*" {
+        request rewrite "/index.html"
     }
 }
 ```
@@ -169,22 +179,32 @@ On OpenBSD, the server automatically restricts itself using pledge:
 | `-socket` | (none) | Unix socket path for FastCGI |
 | `-no-static` | false | Disable static file serving |
 | `-webroot` | `web` | Path to web directory |
+| `-v` | false | Verbose logging (always enabled in `-web` mode) |
 
 ### User Management
 
-User management is available in the UI under the Users tab (admin only). You can:
+User management is available in the UI under the Users tab (administrator only). You can:
 - Create new users with username and password
-- Assign roles (admin/user) during creation or edit them later
+- Assign roles during creation or change them later
 - Enable/disable users
 - Delete users
 
-To grant admin to an existing user via SQL:
+#### Roles
+
+| Role | Permissions |
+|------|-------------|
+| `administrator` | Full access including user management and network settings |
+| `creator` | Create/delete networks, plus all editor permissions |
+| `editor` | Create/edit/delete hosts, edit network descriptions |
+| `reader` | View only (default for users with no role) |
+
+To grant administrator to an existing user via SQL:
 
 ```sql
--- Grant admin role to existing user (adjust username as needed)
+-- Grant administrator role to existing user (adjust username as needed)
 INSERT INTO user_roles ("user", role)
 SELECT u.id, r.id FROM users u, roles r 
-WHERE u.username = 'admin' AND r.name = 'admin'
+WHERE u.username = 'admin' AND r.name = 'administrator'
 ON CONFLICT DO NOTHING;
 ```
 
@@ -239,7 +259,7 @@ The default API base path is `/api/pieng`.
 - `POST /api/pieng/networks/{id}/allocate-host` - Allocate next free host
 - `DELETE /api/pieng/hosts/{ip}` - Delete host
 
-### Users (admin only)
+### Users (administrator only)
 - `GET /api/pieng/users` - List users with roles
 - `POST /api/pieng/users` - Create user (body: `{username, password, roles}`)
 - `PATCH /api/pieng/users/{id}` - Update user (password, status, roles)
@@ -258,7 +278,7 @@ The default API base path is `/api/pieng`.
 - Click owner field to edit inline
 - Press Enter to save, Escape to cancel
 
-### Configuring Allocation Sizes (Admin)
+### Configuring Allocation Sizes (Administrator)
 - Click the gear icon on any subdividable network
 - Check which sizes should be allowed
 - Use "Common" to select /+1 through /+4
@@ -278,10 +298,10 @@ The default API base path is `/api/pieng`.
 - Click description to edit
 - Click del to delete
 
-### User Management (Admin)
-- Go to Users tab (visible only to admins)
+### User Management (Administrator)
+- Go to Users tab (visible only to administrators)
 - Add new users with username/password/role
-- Toggle user roles
+- Change user roles via dropdown (administrator/creator/editor/reader)
 - Enable/disable users
 - Delete users
 
@@ -299,7 +319,7 @@ air
 go run ./cmd/server -addr :9000
 ```
 
-Frontend files are in `web/ui/` and `web/static/`. No build step required - vanilla JavaScript with ES modules.
+Frontend files are in `web/`. No build step required - vanilla JavaScript with ES modules.
 
 ## License
 

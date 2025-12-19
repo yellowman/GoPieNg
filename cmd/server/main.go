@@ -28,6 +28,7 @@ var (
 	flagNoStatic  = flag.Bool("no-static", false, "Disable static file serving (API only mode)")
 	flagAddr      = flag.String("addr", "", "Listen address (overrides PIENG_ADDR)")
 	flagWebRoot   = flag.String("webroot", "web", "Path to web directory")
+	flagVerbose   = flag.Bool("v", false, "Verbose logging (always enabled in -web mode)")
 )
 
 func main() {
@@ -69,8 +70,11 @@ func main() {
 
 	jwt := auth.NewManager([]byte(secret))
 
+	// Enable verbose logging in web mode or if -v flag is set
+	verbose := *flagWeb || *flagVerbose
+
 	// Build router
-	r := buildRouter(database, jwt, *flagNoStatic, *flagWebRoot)
+	r := buildRouter(database, jwt, *flagNoStatic, *flagWebRoot, verbose)
 
 	// Pledge on OpenBSD (no-op on other systems)
 	pledge()
@@ -79,17 +83,19 @@ func main() {
 	if *flagWeb {
 		runHTTP(r, addr)
 	} else {
-		runFastCGI(r, *flagSocket, addr)
+		runFastCGI(r, *flagSocket, addr, verbose)
 	}
 }
 
-func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot string) *chi.Mux {
+func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot string, verbose bool) *chi.Mux {
 	r := chi.NewRouter()
 
 	// Security middleware
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
-	r.Use(chimw.Logger)
+	if verbose {
+		r.Use(chimw.Logger)
+	}
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.Timeout(30 * time.Second))
 	r.Use(securityHeaders)
@@ -120,19 +126,16 @@ func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot stri
 
 	// Static files (unless disabled)
 	if !noStatic {
-		staticDir := filepath.Join(webRoot, "static")
-		uiDir := filepath.Join(webRoot, "ui")
+		// Serve CSS and JS with caching
+		r.Mount("/css/", http.StripPrefix("/css/",
+			cacheControl(http.FileServer(http.Dir(filepath.Join(webRoot, "css"))), "public, max-age=3600")))
+		r.Mount("/js/", http.StripPrefix("/js/",
+			cacheControl(http.FileServer(http.Dir(filepath.Join(webRoot, "js"))), "public, max-age=3600")))
 
-		r.Mount("/static/", http.StripPrefix("/static/",
-			cacheControl(http.FileServer(http.Dir(staticDir)), "public, max-age=3600")))
-
-		r.Get("/ui", spaIndex(filepath.Join(uiDir, "index.html")))
-		r.Get("/ui/*", spaAssets(uiDir))
-
-		// Redirect root to UI
-		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "/ui", http.StatusFound)
-		})
+		// Serve index.html for root and any unmatched routes (SPA)
+		indexPath := filepath.Join(webRoot, "index.html")
+		r.Get("/", spaIndex(indexPath))
+		r.NotFound(spaIndex(indexPath))
 	}
 
 	// API routes
@@ -178,7 +181,7 @@ func runHTTP(r *chi.Mux, addr string) {
 	}
 }
 
-func runFastCGI(r *chi.Mux, socket, addr string) {
+func runFastCGI(r *chi.Mux, socket, addr string, verbose bool) {
 	var listener net.Listener
 	var err error
 
@@ -191,14 +194,18 @@ func runFastCGI(r *chi.Mux, socket, addr string) {
 		}
 		// Set permissions
 		os.Chmod(socket, 0660)
-		log.Printf("FastCGI listening on unix:%s", socket)
+		if verbose {
+			log.Printf("FastCGI listening on unix:%s", socket)
+		}
 	} else {
 		// TCP
 		listener, err = net.Listen("tcp", addr)
 		if err != nil {
 			log.Fatalf("fcgi listen: %v", err)
 		}
-		log.Printf("FastCGI listening on %s", addr)
+		if verbose {
+			log.Printf("FastCGI listening on %s", addr)
+		}
 	}
 
 	if err := fcgi.Serve(listener, r); err != nil {

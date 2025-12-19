@@ -24,6 +24,8 @@ function authed(opts = {}){
 }
 
 async function _fetch(url, opts = {}){
+  // Prevent browser caching of API responses
+  opts.cache = 'no-store'
   const r = await fetch(url, opts)
   if (!r.ok) {
     const msg = await r.text().catch(()=> '')
