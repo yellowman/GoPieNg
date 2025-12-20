@@ -45,7 +45,7 @@ func MakeLoginHandler(db *sql.DB, jwtm *Manager) http.HandlerFunc {
 		var id int64; var username, passhash string; var status int
 		if err := db.QueryRowContext(r.Context(), `SELECT id, username, password, status FROM users WHERE username=$1`, req.Username).Scan(&id,&username,&passhash,&status); err != nil { http.Error(w, "invalid credentials", 401); return }
 		if status == 0 { http.Error(w, "user disabled", 403); return }
-		if !CheckRFC2307SSHA(passhash, req.Password) && passhash != req.Password { http.Error(w, "invalid credentials", 401); return }
+		if !CheckRFC2307SSHA(passhash, req.Password) { http.Error(w, "invalid credentials", 401); return }
 		rows, _ := db.QueryContext(r.Context(), `SELECT r.name FROM roles r JOIN user_roles ur ON ur.role=r.id WHERE ur."user"=$1`, id)
 		defer rows.Close()
 		var roles []string

@@ -17,10 +17,6 @@ https://gitlab.com/thowe/MoPieNg
 - Dark/light mode - Toggle in header, persists across sessions
 - Browser history - Back/forward buttons work as expected
 
-## Migration from PieNg
-
-Follow migration comments in schema.sql
-
 ## Quick Start
 
 ```bash
@@ -38,6 +34,9 @@ go build -o bin/pieng ./cmd/server
 ./bin/pieng -web
 # Open http://localhost:8080
 ```
+## Migration from PieNg
+
+Follow migration comments in schema.sql
 
 ## Server Modes
 
@@ -76,7 +75,7 @@ Disable static file serving when using a separate web server for assets:
 
 ```nginx
 upstream pieng {
-    server unix:/var/run/pieng.sock;
+    server unix:/var/www/run/pieng.sock;
 }
 
 server {
@@ -116,7 +115,7 @@ server "ipam.example.com" {
     root "/var/www/pieng/web"
     
     location "/api/pieng/*" {
-        fastcgi socket "/var/run/pieng.sock"
+        fastcgi socket "/var/www/run/pieng.sock"
     }
     
     location "/*.css" {
@@ -137,18 +136,42 @@ server "ipam.example.com" {
 
 ### Built-in Hardening
 
-- Rate limiting: 100 requests/minute per IP (configurable)
+- Rate limiting: 300 requests/minute per IP
 - Request timeouts: 30 second maximum
 - Security headers: X-Content-Type-Options, X-Frame-Options, etc.
 - CORS: Disabled by default, configure via `PIENG_CORS_ORIGINS`
 - Localhost binding: Default address is 127.0.0.1, not 0.0.0.0
+- Parameterized SQL queries (no SQL injection)
+- Constant-time password comparison
+
+### Privilege Separation (Unix)
+
+When started as root, the daemon automatically:
+
+1. **Creates the socket** with proper ownership before dropping privileges
+2. **Chroots** to the socket directory (or `PIENG_CHROOT` if set)
+3. **Drops privileges** to an unprivileged user
+
+User lookup order: `_gopieng` → `_pieng` → `www` → `nobody`
+
+Socket group is set to `www` (or `www-data` on Debian) for web server access.
+
+```bash
+# As root - will chroot and drop to _gopieng
+doas -u root /usr/local/bin/gopieng -socket /var/www/run/gopieng.sock
+
+# Or run directly as unprivileged user (no chroot)
+doas -u _gopieng /usr/local/bin/gopieng -socket /var/www/run/gopieng.sock
+```
 
 ### OpenBSD pledge(2)
 
-On OpenBSD, the server automatically restricts itself using pledge:
+On OpenBSD, the server restricts itself using pledge after initialization:
 - `stdio` - Basic I/O
 - `rpath` - Read static files
-- `inet` - Network connections
+- `cpath` - Create socket file
+- `fattr` - Set socket permissions
+- `inet` - Network connections (database)
 - `dns` - DNS resolution
 - `unix` - Unix sockets (FastCGI)
 
@@ -158,7 +181,7 @@ On OpenBSD, the server automatically restricts itself using pledge:
 2. Use TLS termination at the proxy
 3. Set strong `PIENG_JWT_SECRET` (32+ characters)
 4. Use Unix sockets for FastCGI (not TCP)
-5. Run as unprivileged user
+5. Let the daemon drop privileges from root (automatic chroot)
 6. Use database connection pooling limits
 
 ## Environment Variables
@@ -169,17 +192,29 @@ On OpenBSD, the server automatically restricts itself using pledge:
 | `PIENG_ADDR` | `127.0.0.1:8080` | Listen address |
 | `PIENG_JWT_SECRET` | required | Secret for JWT signing (32+ chars) |
 | `PIENG_CORS_ORIGINS` | (none) | Comma-separated allowed origins |
+| `PIENG_USER` | (auto) | User to drop privileges to |
+| `PIENG_SOCKET_GROUP` | `www` | Group for socket ownership |
+| `PIENG_CHROOT` | (socket dir) | Chroot directory when running as root |
 
 ## Command Line Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `-d` | false | Debug mode - run in foreground (like httpd -d) |
+| `-P` | (none) | Write PID to file (for rc.d scripts) |
 | `-web` | false | Run as standalone HTTP server (default is FastCGI) |
 | `-addr` | `$PIENG_ADDR` | Listen address |
 | `-socket` | (none) | Unix socket path for FastCGI |
 | `-no-static` | false | Disable static file serving |
 | `-webroot` | `web` | Path to web directory |
 | `-v` | false | Verbose logging (always enabled in `-web` mode) |
+
+By default, the daemon forks to background (like OpenBSD httpd). Use `-d` to run in foreground for debugging. The `-web` mode always runs in foreground.
+
+**Logging behavior:**
+- Configuration errors (missing DSN, bad socket path, DB connection failure) are shown on stderr before daemonizing
+- After daemonizing, runtime errors go to syslog (`daemon.info` facility, tag `gopieng`)
+- Use `-d` or `-v` for verbose logging to stderr/stdout
 
 ### User Management
 

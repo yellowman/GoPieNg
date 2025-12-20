@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -29,23 +30,17 @@ var (
 	flagAddr      = flag.String("addr", "", "Listen address (overrides PIENG_ADDR)")
 	flagWebRoot   = flag.String("webroot", "web", "Path to web directory")
 	flagVerbose   = flag.Bool("v", false, "Verbose logging (always enabled in -web mode)")
+	flagDebug     = flag.Bool("d", false, "Debug mode - run in foreground, don't daemonize")
+	flagPidFile   = flag.String("P", "", "Write PID to file (for rc.d scripts)")
 )
 
 func main() {
 	flag.Parse()
 
-	// Environment config
+	// Validate configuration BEFORE daemonizing so errors are visible
 	dsn := os.Getenv("PIENG_DSN")
 	if dsn == "" {
 		log.Fatal("PIENG_DSN is required")
-	}
-
-	addr := os.Getenv("PIENG_ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:8080" // Default to localhost only
-	}
-	if *flagAddr != "" {
-		addr = *flagAddr
 	}
 
 	secret := os.Getenv("PIENG_JWT_SECRET")
@@ -56,7 +51,58 @@ func main() {
 		log.Print("WARNING: JWT secret should be at least 32 characters")
 	}
 
-	// Open database
+	addr := os.Getenv("PIENG_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:8080" // Default to localhost only
+	}
+	if *flagAddr != "" {
+		addr = *flagAddr
+	}
+
+	// Validate socket path if specified
+	if *flagSocket != "" {
+		socketDir := filepath.Dir(*flagSocket)
+		if _, err := os.Stat(socketDir); os.IsNotExist(err) {
+			log.Fatalf("socket directory does not exist: %s", socketDir)
+		}
+	}
+
+	// Test database connection before daemonizing so errors are visible
+	testDB, err := db.Open(dsn)
+	if err != nil {
+		log.Fatalf("db open: %v", err)
+	}
+	if err := testDB.Ping(); err != nil {
+		log.Fatalf("db ping: %v", err)
+	}
+	testDB.Close()
+
+	// Daemonize unless -d (debug) or -web mode
+	// Config is validated, safe to background now
+	if !*flagDebug && !*flagWeb {
+		if Daemonize() {
+			// Parent process exits
+			os.Exit(0)
+		}
+		// Child continues
+	}
+
+	// Write PID file if requested (after daemonize so we get child PID)
+	if *flagPidFile != "" {
+		if err := os.WriteFile(*flagPidFile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0644); err != nil {
+			log.Fatalf("pidfile: %v", err)
+		}
+		// Clean up on exit
+		defer os.Remove(*flagPidFile)
+	}
+
+	// Enable verbose logging in web mode or if -v flag is set
+	verbose := *flagWeb || *flagVerbose
+
+	// Initialize privilege separation (must be done early)
+	privsep := NewPrivSep(verbose)
+
+	// Open database connection for real (child process needs its own)
 	database, err := db.Open(dsn)
 	if err != nil {
 		log.Fatalf("db open: %v", err)
@@ -70,11 +116,22 @@ func main() {
 
 	jwt := auth.NewManager([]byte(secret))
 
-	// Enable verbose logging in web mode or if -v flag is set
-	verbose := *flagWeb || *flagVerbose
-
 	// Build router
 	r := buildRouter(database, jwt, *flagNoStatic, *flagWebRoot, verbose)
+
+	// Create socket before dropping privileges (if socket mode)
+	var listener net.Listener
+	if !*flagWeb && *flagSocket != "" && privsep.IsRoot() {
+		listener, err = privsep.CreateSocket(*flagSocket)
+		if err != nil {
+			log.Fatalf("create socket: %v", err)
+		}
+	}
+
+	// Drop privileges if running as root
+	if err := privsep.DropPrivileges(*flagSocket); err != nil {
+		log.Fatalf("privsep: %v", err)
+	}
 
 	// Pledge on OpenBSD (no-op on other systems)
 	pledge()
@@ -83,7 +140,7 @@ func main() {
 	if *flagWeb {
 		runHTTP(r, addr)
 	} else {
-		runFastCGI(r, *flagSocket, addr, verbose)
+		runFastCGI(r, *flagSocket, addr, verbose, listener)
 	}
 }
 
@@ -181,18 +238,24 @@ func runHTTP(r *chi.Mux, addr string) {
 	}
 }
 
-func runFastCGI(r *chi.Mux, socket, addr string, verbose bool) {
+func runFastCGI(r *chi.Mux, socket, addr string, verbose bool, existingListener net.Listener) {
 	var listener net.Listener
 	var err error
 
-	if socket != "" {
-		// Unix socket
+	if existingListener != nil {
+		// Use pre-created listener (from privsep)
+		listener = existingListener
+		if verbose {
+			log.Printf("FastCGI listening on unix:%s", socket)
+		}
+	} else if socket != "" {
+		// Unix socket (not pre-created, meaning not root)
 		os.Remove(socket) // Clean up stale socket
 		listener, err = net.Listen("unix", socket)
 		if err != nil {
 			log.Fatalf("fcgi socket: %v", err)
 		}
-		// Set permissions
+		// Set permissions - group writable
 		os.Chmod(socket, 0660)
 		if verbose {
 			log.Printf("FastCGI listening on unix:%s", socket)

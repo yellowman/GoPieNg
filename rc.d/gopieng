@@ -1,0 +1,36 @@
+#!/bin/ksh
+#
+# $OpenBSD$
+
+daemon="/usr/local/bin/gopieng"
+# Run as root - daemon handles privilege separation and chroot
+daemon_user="root"
+
+. /etc/rc.d/rc.subr
+
+# Generate random JWT secret on each start (logins invalidated on restart)
+_jwt_secret=$(openssl rand -base64 48)
+
+# For persistent logins across restarts, uncomment and set a static secret:
+#_jwt_secret="changeme-use-openssl-rand-base64-48-to-generate"
+
+# Environment variables
+# PIENG_USER defaults to _gopieng, _pieng, www, or nobody (in that order)
+# PIENG_SOCKET_GROUP defaults to www for httpd access
+gopieng_env="PIENG_DSN=postgres://pieng:password@localhost/pieng?sslmode=disable \
+PIENG_JWT_SECRET=${_jwt_secret}"
+
+# Flags: -socket for FastCGI unix socket, -P for PID file
+# Daemon will chroot to /var/www/run and drop to unprivileged user
+# Daemon daemonizes itself (like httpd)
+gopieng_flags="-socket /var/www/run/gopieng.sock -P /var/run/gopieng.pid"
+
+# Use pexp to match the process (daemon backgrounds itself)
+pexp="/usr/local/bin/gopieng.*-socket"
+rc_reload=NO
+
+rc_start() {
+	rc_exec "env ${gopieng_env} ${daemon} ${gopieng_flags}"
+}
+
+rc_cmd $1
