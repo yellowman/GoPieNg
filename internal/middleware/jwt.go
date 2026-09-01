@@ -46,25 +46,26 @@ func JWT(jwtm *auth.Manager, db *sql.DB) func(http.Handler) http.Handler {
 				http.Error(w, "authorization lookup failed", http.StatusInternalServerError)
 				return
 			}
-		defer rows.Close()
+			defer rows.Close()
 
-		roles := make([]string, 0, len(claims.Roles))
-		for rows.Next() {
-			var role string
-			if err := rows.Scan(&role); err != nil {
+			roles := make([]string, 0, len(claims.Roles))
+			for rows.Next() {
+				var role string
+				if err := rows.Scan(&role); err != nil {
+					http.Error(w, "authorization lookup failed", http.StatusInternalServerError)
+					return
+				}
+				roles = append(roles, role)
+			}
+			if err := rows.Err(); err != nil {
 				http.Error(w, "authorization lookup failed", http.StatusInternalServerError)
 				return
 			}
-			roles = append(roles, role)
-		}
-		if err := rows.Err(); err != nil {
-			http.Error(w, "authorization lookup failed", http.StatusInternalServerError)
-			return
-		}
 
-		claims.Roles = roles
-		ctx := context.WithValue(r.Context(), ClaimsKey, claims)
-		next.ServeHTTP(w, r.WithContext(ctx))
+			claims.Roles = roles
+			ctx := context.WithValue(r.Context(), ClaimsKey, claims)
+			ctx = auth.SetClaimsContext(ctx, claims)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
