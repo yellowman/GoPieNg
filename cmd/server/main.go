@@ -24,14 +24,14 @@ import (
 )
 
 var (
-	flagWeb       = flag.Bool("web", false, "Run as standalone HTTP server (default is FastCGI)")
-	flagSocket    = flag.String("socket", "", "Unix socket path for FastCGI")
-	flagNoStatic  = flag.Bool("no-static", false, "Disable static file serving (API only mode)")
-	flagAddr      = flag.String("addr", "", "Listen address (overrides PIENG_ADDR)")
-	flagWebRoot   = flag.String("webroot", "web", "Path to web directory")
-	flagVerbose   = flag.Bool("v", false, "Verbose logging (always enabled in -web mode)")
-	flagDebug     = flag.Bool("d", false, "Debug mode - run in foreground, don't daemonize")
-	flagPidFile   = flag.String("P", "", "Write PID to file (for rc.d scripts)")
+	flagWeb      = flag.Bool("web", false, "Run as standalone HTTP server (default is FastCGI)")
+	flagSocket   = flag.String("socket", "", "Unix socket path for FastCGI")
+	flagNoStatic = flag.Bool("no-static", false, "Disable static file serving (API only mode)")
+	flagAddr     = flag.String("addr", "", "Listen address (overrides PIENG_ADDR)")
+	flagWebRoot  = flag.String("webroot", "web", "Path to web directory")
+	flagVerbose  = flag.Bool("v", false, "Verbose logging (always enabled in -web mode)")
+	flagDebug    = flag.Bool("d", false, "Debug mode - run in foreground, don't daemonize")
+	flagPidFile  = flag.String("P", "", "Write PID to file (for rc.d scripts)")
 )
 
 func main() {
@@ -212,7 +212,7 @@ func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot stri
 
 		// Authenticated
 		api.Group(func(priv chi.Router) {
-			priv.Use(middleware.JWT(jwt))
+			priv.Use(middleware.JWT(jwt, database.DB))
 			priv.Get("/me", auth.MeHandler(database.DB, jwt))
 			priv.Mount("/", db.API(database.DB, jwt))
 		})
@@ -293,8 +293,8 @@ func securityHeaders(next http.Handler) http.Handler {
 // Simple rate limiter per IP
 func rateLimiter(limit int, window time.Duration) func(http.Handler) http.Handler {
 	type client struct {
-		count    int
-		resetAt  time.Time
+		count   int
+		resetAt time.Time
 	}
 	var mu sync.Mutex
 	clients := make(map[string]*client)
