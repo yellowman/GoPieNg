@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -121,8 +122,6 @@ func MakeLoginHandler(db *sql.DB, jwtm *Manager) http.HandlerFunc {
 	}
 }
 
-// MeHandler relies on the authentication middleware to validate the token and
-// refresh roles/status from the database. It does not parse Authorization again.
 func MeHandler(db *sql.DB, jwtm *Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := ClaimsFromContext(r.Context())
@@ -140,9 +139,6 @@ func MeHandler(db *sql.DB, jwtm *Manager) http.HandlerFunc {
 	}
 }
 
-// ClaimsFromContext is supplied by middleware through a small context adapter
-// to avoid a package import cycle. Middleware should install the claims using
-// SetClaimsContext.
 type claimsContextKey struct{}
 
 func SetClaimsContext(ctx context.Context, claims *Claims) context.Context {
