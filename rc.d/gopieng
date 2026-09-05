@@ -17,13 +17,13 @@ _jwt_secret=$(openssl rand -base64 48)
 # Environment variables
 # PIENG_USER defaults to _gopieng, _pieng, www, or nobody (in that order)
 # PIENG_SOCKET_GROUP defaults to www for httpd access
-gopieng_env="PIENG_DSN=postgres://pieng:password@localhost/pieng?sslmode=disable \
+gopieng_env="PIENG_DSN=postgres://pieng:password@127.0.0.1/pieng?sslmode=disable \
 PIENG_JWT_SECRET=${_jwt_secret}"
 
-# Flags: -socket for FastCGI unix socket, -P for PID file
+# Flags: -socket for FastCGI unix socket; rc.d matches the process via pexp
 # Daemon will chroot to /var/www/run and drop to unprivileged user
 # Daemon daemonizes itself (like httpd)
-gopieng_flags="-socket /var/www/run/gopieng.sock -P /var/run/gopieng.pid"
+gopieng_flags="-socket /var/www/run/gopieng.sock"
 
 # Use pexp to match the process (daemon backgrounds itself)
 pexp="/usr/local/bin/gopieng.*-socket"

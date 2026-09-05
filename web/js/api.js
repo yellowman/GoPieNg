@@ -31,6 +31,7 @@ async function _fetch(url, opts = {}){
     const msg = await r.text().catch(()=> '')
     if (r.status === 401) {
       try { localStorage.removeItem('pieng_token') } catch {}
+      window.dispatchEvent(new Event('pieng:unauthorized'))
     }
     throw new Error(msg || r.statusText)
   }

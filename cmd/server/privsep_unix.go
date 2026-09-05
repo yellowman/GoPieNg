@@ -70,7 +70,7 @@ type PrivSep struct {
 // NewPrivSep creates a new privilege separation handler
 func NewPrivSep(verbose bool) *PrivSep {
 	ps := &PrivSep{
-		isRoot:  os.Getuid() == 0,
+		isRoot:  os.Geteuid() == 0,
 		verbose: verbose,
 	}
 
@@ -233,8 +233,7 @@ func (ps *PrivSep) DropPrivileges(socketPath string) error {
 
 	// Ensure chroot directory exists
 	if _, err := os.Stat(chrootDir); os.IsNotExist(err) {
-		log.Printf("privsep: chroot directory %s does not exist, skipping chroot", chrootDir)
-		chrootDir = ""
+		return fmt.Errorf("chroot directory does not exist: %s", chrootDir)
 	}
 
 	// Perform chroot if we have a directory
@@ -262,10 +261,7 @@ func (ps *PrivSep) DropPrivileges(socketPath string) error {
 
 	// Drop supplementary groups
 	if err := syscall.Setgroups([]int{gid}); err != nil {
-		// Not fatal on all systems
-		if ps.verbose {
-			log.Printf("privsep: setgroups failed (may be ok): %v", err)
-		}
+		return fmt.Errorf("setgroups: %w", err)
 	}
 
 	// Drop group privileges first (must be done before dropping user)

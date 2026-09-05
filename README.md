@@ -17,11 +17,15 @@ https://gitlab.com/thowe/MoPieNg
 - Dark/light mode - Toggle in header, persists across sessions
 - Browser history - Back/forward buttons work as expected
 
+## Hardening upgrade
+
+Read [the upgrade and deployment notes](docs/hardening.md) before deploying this version. It adds transactional allocation/auditing, live authorization, Argon2id passwords, credential-bound sessions, bounded probes, and embedded static assets. All users must sign in again.
+
 ## Quick Start
 
 ```bash
 # Set required environment variables
-export PIENG_DSN='postgres://pieng:password@localhost:5432/pieng?sslmode=disable'
+export PIENG_DSN='postgres://pieng:password@127.0.0.1:5432/pieng?sslmode=disable'
 export PIENG_JWT_SECRET='your-secret-key-at-least-32-characters'
 
 # Build
@@ -137,7 +141,7 @@ server "ipam.example.com" {
 ### Built-in Hardening
 
 - Rate limiting: 300 requests/minute per IP
-- Request timeouts: 30 second maximum
+- Request contexts: 30-second deadline; database operations use cancellation
 - Security headers: X-Content-Type-Options, X-Frame-Options, etc.
 - CORS: Disabled by default, configure via `PIENG_CORS_ORIGINS`
 - Localhost binding: Default address is 127.0.0.1, not 0.0.0.0
@@ -192,6 +196,7 @@ On OpenBSD, the server restricts itself using pledge after initialization:
 | `PIENG_ADDR` | `127.0.0.1:8080` | Listen address |
 | `PIENG_JWT_SECRET` | required | Secret for JWT signing (32+ chars) |
 | `PIENG_CORS_ORIGINS` | (none) | Comma-separated allowed origins |
+| `PIENG_TRUSTED_PROXIES` | (none) | Trusted proxy IPs/CIDRs for forwarded client addresses |
 | `PIENG_USER` | (auto) | User to drop privileges to |
 | `PIENG_SOCKET_GROUP` | `www` | Group for socket ownership |
 | `PIENG_CHROOT` | (socket dir) | Chroot directory when running as root |
@@ -206,7 +211,7 @@ On OpenBSD, the server restricts itself using pledge after initialization:
 | `-addr` | `$PIENG_ADDR` | Listen address |
 | `-socket` | (none) | Unix socket path for FastCGI |
 | `-no-static` | false | Disable static file serving |
-| `-webroot` | `web` | Path to web directory |
+| `-webroot` | (embedded) | Optional external webroot snapshot |
 | `-v` | false | Verbose logging (always enabled in `-web` mode) |
 
 By default, the daemon forks to background (like OpenBSD httpd). Use `-d` to run in foreground for debugging. The `-web` mode always runs in foreground.
@@ -262,9 +267,9 @@ UPDATE networks SET valid_masks = NULL WHERE subdivide = true;
 
 ### Password Formats
 
-Passwords can be stored as:
+New passwords use `$argon2id$...` PHC strings. Legacy password formats remain readable and upgrade on successful login:
 - `{SSHA}...` - SHA1 with salt (old format, still supported)
-- `{SSHA256}...` - SHA256 with salt (recommended, used by UI)
+- `{SSHA256}...` - Legacy SHA256 with salt (upgraded on login)
 - `{SSHA512}...` - SHA512 with salt
 
 ## Database Schema

@@ -1,6 +1,7 @@
-import { api, auth } from './api.js?v=9'
-import { store } from './store.js?v=9'
-import { mountApp, setResetScroll } from './components.js?v=9'
+import { ChangeTracker, compareAddresses } from './refresh.js?v=10'
+import { api, auth } from './api.js?v=10'
+import { store } from './store.js?v=10'
+import { mountApp, setResetScroll } from './components.js?v=10'
 
 const root = document.getElementById('app')
 
@@ -56,23 +57,21 @@ mountApp(root)
   
   // Network health monitoring and change detection - poll every 5 seconds
   let networkOk = true
-  let lastKnownChange = null
+  const changes = new ChangeTracker()
+  let checkingNetwork = false
   
   // Call this after user-initiated changes to prevent auto-refresh from re-rendering
   let suppressRefreshUntil = 0
-  window.syncLastChange = async () => {
-    // Suppress auto-refresh for 3 seconds after user action
+  window.syncLastChange = () => {
     suppressRefreshUntil = Date.now() + 3000
-    try {
-      const r = await fetch('/api/pieng/ping', { cache: 'no-store' })
-      if (r.ok) {
-        const data = await r.json()
-        if (data.last_change) lastKnownChange = data.last_change
-      }
-    } catch(e) {}
   }
-  
+  window.addEventListener('pieng:unauthorized', () => {
+    store.set({ user: null, networks: [] })
+  })
+
   async function checkNetwork() {
+    if (checkingNetwork) return
+    checkingNetwork = true
     const banner = document.getElementById('networkBanner')
     try {
       const r = await fetch('/api/pieng/ping', { 
@@ -92,11 +91,12 @@ mountApp(root)
         // Check if data changed or network just came back (refresh if logged in)
         if (store.user) {
           const shouldRefresh = wasOffline || 
-            (data.last_change && lastKnownChange !== null && data.last_change !== lastKnownChange)
+            changes.needsRefresh(data.last_change)
           
           // Skip if suppressed (recent user action) or search active
           const searchActive = window.searchState && window.searchState.matches && window.searchState.matches.length > 0
-          const suppressed = Date.now() < suppressRefreshUntil
+          const editing = document.activeElement?.matches('input, textarea, select') || document.querySelector('.warning-modal-overlay')
+          const suppressed = Date.now() < suppressRefreshUntil || editing
           
           if (shouldRefresh && !searchActive && !suppressed) {
             try {
@@ -104,14 +104,13 @@ mountApp(root)
               const newNetworks = Array.isArray(list) ? list : []
               // Always update when last_change differs - hosts may have changed
               store.set({ networks: newNetworks })
+              changes.acknowledge(data.last_change)
             } catch(e) {
               // Ignore refresh errors
             }
           }
           
-          if (data.last_change) {
-            lastKnownChange = data.last_change
-          }
+
         }
       } else {
         throw new Error('not ok')
@@ -121,6 +120,8 @@ mountApp(root)
         networkOk = false
         if (banner) banner.classList.remove('hidden')
       }
+    } finally {
+      checkingNetwork = false
     }
   }
   checkNetwork()
@@ -144,6 +145,16 @@ mountApp(root)
       })
       s.className = 'status ' + (r.ok ? 'ok' : 'error')
       t.textContent = r.ok ? 'ok' : 'auth'
+      if (token !== auth.token()) return // stale response from another session
+      if (r.status === 401) {
+        auth.setToken('')
+        window.dispatchEvent(new Event('pieng:unauthorized'))
+      } else if (r.ok) {
+        const me = await r.json()
+        if (token === auth.token() && store.user && JSON.stringify(me.roles) !== JSON.stringify(store.user.roles)) {
+          store.set({ user: me })
+        }
+      }
     } catch(e) {
       s.className = 'status error'
       t.textContent = 'err'
@@ -249,24 +260,12 @@ mountApp(root)
   
   let navDebounce = null
   
-  // Parse IP address to comparable number (supports IPv4)
-  function ipToNum(ip) {
-    if (!ip) return 0
-    // Extract IP from CIDR if present
-    const addr = ip.split('/')[0]
-    const parts = addr.split('.')
-    if (parts.length !== 4) return 0
-    // Use multiplication instead of bitwise to avoid signed int issues
-    return parseInt(parts[0]) * 16777216 + parseInt(parts[1]) * 65536 + 
-           parseInt(parts[2]) * 256 + parseInt(parts[3])
-  }
-  
   // Sort search results by IP address to match tree order
   function sortResultsByIP(results) {
     return results.sort((a, b) => {
       const ipA = a.type === 'network' ? a.address_range : a.address
       const ipB = b.type === 'network' ? b.address_range : b.address
-      return ipToNum(ipA) - ipToNum(ipB)
+      return compareAddresses(ipA, ipB)
     })
   }
   
