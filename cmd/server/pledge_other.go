@@ -2,6 +2,4 @@
 
 package main
 
-func pledge() {
-	// No-op on non-OpenBSD systems
-}
+func pledge() error { return nil }

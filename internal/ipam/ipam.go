@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -96,44 +97,76 @@ func NextFreeSubnetStr(parent string, children []string, desiredMask int) (strin
 	return NextFreeSubnet(p, children, desiredMask)
 }
 
+// NextFreeSubnet skips occupied intervals instead of enumerating the address
+// space. A /32 IPv6 pool can therefore allocate /64s without materializing
+// 2^32 candidate prefixes. Runtime depends on existing allocations only.
 func NextFreeSubnet(parent *net.IPNet, childCIDRs []string, desiredMask int) (string, error) {
 	if parent == nil {
 		return "", errors.New("invalid parent network")
 	}
-	if desiredMask <= 0 {
-		return "", errors.New("mask required")
-	}
 	pm, bits := parent.Mask.Size()
-	if pm < 0 || bits == 0 || desiredMask > bits {
+	if bits == 0 || desiredMask < pm || desiredMask > bits {
 		return "", errors.New("invalid mask")
 	}
-	if desiredMask < pm {
-		return "", fmt.Errorf("mask %d < parent %d", desiredMask, pm)
+	ranges, err := occupiedRanges(parent, childCIDRs)
+	if err != nil {
+		return "", err
 	}
-	if !enumerationAllowed(pm, desiredMask) {
-		return "", fmt.Errorf("requested split is too large to enumerate")
+	first, last := firstAndLast(parent)
+	start, end := ipToBig(first), ipToBig(last)
+	size := new(big.Int).Lsh(big.NewInt(1), uint(bits-desiredMask))
+	candidate := new(big.Int).Set(start)
+	one := big.NewInt(1)
+	for _, r := range ranges {
+		candidateEnd := new(big.Int).Sub(new(big.Int).Add(candidate, size), one)
+		if candidateEnd.Cmp(r.first) < 0 {
+			break
+		}
+		if candidate.Cmp(r.last) > 0 {
+			continue
+		}
+		// ceil((lastOccupied + 1 - poolStart) / size), aligned to the pool.
+		offset := new(big.Int).Sub(new(big.Int).Add(r.last, one), start)
+		offset.Add(offset, new(big.Int).Sub(size, one))
+		offset.Div(offset, size)
+		candidate.Add(start, offset.Mul(offset, size))
 	}
+	candidateEnd := new(big.Int).Sub(new(big.Int).Add(candidate, size), one)
+	if candidateEnd.Cmp(end) > 0 {
+		return "", errors.New("no space")
+	}
+	return fmt.Sprintf("%s/%d", bigToIP(candidate, bits == 128), desiredMask), nil
+}
 
-	existing := []*net.IPNet{}
-	for _, c := range childCIDRs {
+type addressRange struct{ first, last *big.Int }
+
+func occupiedRanges(parent *net.IPNet, children []string) ([]addressRange, error) {
+	first, last := firstAndLast(parent)
+	low, high := ipToBig(first), ipToBig(last)
+	out := []addressRange{}
+	for _, c := range children {
 		_, n, err := net.ParseCIDR(c)
-		if err == nil {
-			existing = append(existing, n)
+		if err != nil {
+			return nil, fmt.Errorf("invalid child network: %w", err)
 		}
+		if (n.IP.To4() == nil) != (parent.IP.To4() == nil) {
+			continue
+		}
+		a, b := firstAndLast(n)
+		start, end := ipToBig(a), ipToBig(b)
+		if end.Cmp(low) < 0 || start.Cmp(high) > 0 {
+			continue
+		}
+		if start.Cmp(low) < 0 {
+			start = new(big.Int).Set(low)
+		}
+		if end.Cmp(high) > 0 {
+			end = new(big.Int).Set(high)
+		}
+		out = append(out, addressRange{start, end})
 	}
-	for _, n := range SplitInto(parent, desiredMask) {
-		collides := false
-		for _, c := range existing {
-			if Overlap(n, c) {
-				collides = true
-				break
-			}
-		}
-		if !collides {
-			return n.String(), nil
-		}
-	}
-	return "", errors.New("no space")
+	sort.Slice(out, func(i, j int) bool { return out[i].first.Cmp(out[j].first) < 0 })
+	return out, nil
 }
 
 func enumerationAllowed(parentMask, newMask int) bool {
@@ -177,7 +210,7 @@ func SplitInto(parent *net.IPNet, newMask int) []*net.IPNet {
 }
 
 func Overlap(a, b *net.IPNet) bool {
-	if a == nil || b == nil {
+	if a == nil || b == nil || (a.IP.To4() == nil) != (b.IP.To4() == nil) {
 		return false
 	}
 	fa, la := firstAndLast(a)
@@ -331,30 +364,28 @@ func AvailableSubnetsStr(parent string, children []string, mask int) []string {
 		return nil
 	}
 	pm, bits := p.Mask.Size()
-	if pm < 0 || bits == 0 || mask < pm || mask > bits || !enumerationAllowed(pm, mask) {
+	if bits == 0 || mask < pm || mask > bits || !enumerationAllowed(pm, mask) {
 		return nil
 	}
-
-	existing := []*net.IPNet{}
-	for _, c := range children {
-		_, n, err := net.ParseCIDR(c)
-		if err == nil {
-			existing = append(existing, n)
-		}
+	occupied, err := occupiedRanges(p, children)
+	if err != nil {
+		return nil
 	}
-
-	var out []string
-	for _, sub := range SplitInto(p, mask) {
-		collides := false
-		for _, c := range existing {
-			if Overlap(sub, c) {
-				collides = true
-				break
-			}
+	first, _ := firstAndLast(p)
+	start := ipToBig(first)
+	size := new(big.Int).Lsh(big.NewInt(1), uint(bits-mask))
+	out := []string{}
+	pos := 0
+	for i := 0; i < (1 << uint(mask-pm)); i++ {
+		base := new(big.Int).Add(start, new(big.Int).Mul(size, big.NewInt(int64(i))))
+		end := new(big.Int).Sub(new(big.Int).Add(base, size), big.NewInt(1))
+		for pos < len(occupied) && occupied[pos].last.Cmp(base) < 0 {
+			pos++
 		}
-		if !collides {
-			out = append(out, sub.String())
+		if pos < len(occupied) && occupied[pos].first.Cmp(end) <= 0 {
+			continue
 		}
+		out = append(out, fmt.Sprintf("%s/%d", bigToIP(base, bits == 128), mask))
 	}
 	return out
 }

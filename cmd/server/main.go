@@ -1,10 +1,11 @@
 package main
 
 import (
-	"database/sql"
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"github.com/yellowman/GoPieNg/internal/auth"
 	"github.com/yellowman/GoPieNg/internal/db"
 	"github.com/yellowman/GoPieNg/internal/middleware"
+	webui "github.com/yellowman/GoPieNg/web"
 )
 
 var (
@@ -28,7 +30,7 @@ var (
 	flagSocket   = flag.String("socket", "", "Unix socket path for FastCGI")
 	flagNoStatic = flag.Bool("no-static", false, "Disable static file serving (API only mode)")
 	flagAddr     = flag.String("addr", "", "Listen address (overrides PIENG_ADDR)")
-	flagWebRoot  = flag.String("webroot", "web", "Path to web directory")
+	flagWebRoot  = flag.String("webroot", "", "External web directory (default: embedded assets)")
 	flagVerbose  = flag.Bool("v", false, "Verbose logging (always enabled in -web mode)")
 	flagDebug    = flag.Bool("d", false, "Debug mode - run in foreground, don't daemonize")
 	flagPidFile  = flag.String("P", "", "Write PID to file (for rc.d scripts)")
@@ -48,7 +50,7 @@ func main() {
 		log.Fatal("PIENG_JWT_SECRET is required in production")
 	}
 	if len(secret) < 32 {
-		log.Print("WARNING: JWT secret should be at least 32 characters")
+		log.Fatal("PIENG_JWT_SECRET must be at least 32 characters")
 	}
 
 	addr := os.Getenv("PIENG_ADDR")
@@ -71,9 +73,6 @@ func main() {
 	testDB, err := db.Open(dsn)
 	if err != nil {
 		log.Fatalf("db open: %v", err)
-	}
-	if err := testDB.Ping(); err != nil {
-		log.Fatalf("db ping: %v", err)
 	}
 	testDB.Close()
 
@@ -117,7 +116,10 @@ func main() {
 	jwt := auth.NewManager([]byte(secret))
 
 	// Build router
-	r := buildRouter(database, jwt, *flagNoStatic, *flagWebRoot, verbose)
+	r, err := buildRouter(database, jwt, *flagNoStatic, *flagWebRoot, verbose)
+	if err != nil {
+		log.Fatalf("router: %v", err)
+	}
 
 	// Create socket before dropping privileges (if socket mode)
 	var listener net.Listener
@@ -134,7 +136,9 @@ func main() {
 	}
 
 	// Pledge on OpenBSD (no-op on other systems)
-	pledge()
+	if err := pledge(); err != nil {
+		log.Fatalf("pledge: %v", err)
+	}
 
 	// Run server
 	if *flagWeb {
@@ -144,12 +148,16 @@ func main() {
 	}
 }
 
-func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot string, verbose bool) *chi.Mux {
+func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot string, verbose bool) (*chi.Mux, error) {
 	r := chi.NewRouter()
 
 	// Security middleware
 	r.Use(chimw.RequestID)
-	r.Use(chimw.RealIP)
+	proxy, err := trustedProxyMiddleware(os.Getenv("PIENG_TRUSTED_PROXIES"))
+	if err != nil {
+		return nil, err
+	}
+	r.Use(proxy)
 	if verbose {
 		r.Use(chimw.Logger)
 	}
@@ -158,23 +166,25 @@ func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot stri
 	r.Use(securityHeaders)
 	r.Use(rateLimiter(300, time.Minute)) // 300 req/min per IP
 
-	// CORS - restrictive by default
-	allowedOrigins := strings.Split(os.Getenv("PIENG_CORS_ORIGINS"), ",")
-	if len(allowedOrigins) == 1 && allowedOrigins[0] == "" {
-		allowedOrigins = []string{} // No external origins by default
+	// Installing chi/cors with an empty origin list means wildcard, not
+	// disabled. Omit the middleware entirely unless explicitly configured.
+	if config := strings.TrimSpace(os.Getenv("PIENG_CORS_ORIGINS")); config != "" {
+		origins := strings.Split(config, ",")
+		for i := range origins {
+			origins[i] = strings.TrimSpace(origins[i])
+		}
+		r.Use(cors.Handler(cors.Options{
+			AllowedOrigins:   origins,
+			AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+			AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+			AllowCredentials: true,
+			MaxAge:           300,
+		}))
 	}
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   allowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
-		ExposedHeaders:   []string{"Link"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
 
 	// Health check (unauthenticated)
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		if err := database.Ping(); err != nil {
+		if err := database.PingContext(r.Context()); err != nil {
 			http.Error(w, "db", 503)
 			return
 		}
@@ -183,31 +193,42 @@ func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot stri
 
 	// Static files (unless disabled)
 	if !noStatic {
-		// Serve CSS and JS with caching
-		r.Mount("/css/", http.StripPrefix("/css/",
-			cacheControl(http.FileServer(http.Dir(filepath.Join(webRoot, "css"))), "public, max-age=3600")))
-		r.Mount("/js/", http.StripPrefix("/js/",
-			cacheControl(http.FileServer(http.Dir(filepath.Join(webRoot, "js"))), "public, max-age=3600")))
-
-		// Serve index.html for root and any unmatched routes (SPA)
-		indexPath := filepath.Join(webRoot, "index.html")
-		r.Get("/", spaIndex(indexPath))
-		r.NotFound(spaIndex(indexPath))
+		assets, err := webui.Load(webRoot)
+		if err != nil {
+			return nil, err
+		}
+		index, err := fs.ReadFile(assets, "index.html")
+		if err != nil {
+			return nil, err
+		}
+		static := cacheControl(http.FileServer(http.FS(assets)), "public, max-age=3600")
+		r.Mount("/css/", static)
+		r.Mount("/js/", static)
+		indexHandler := func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Cache-Control", "no-cache")
+			http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(index))
+		}
+		r.Get("/", indexHandler)
+		r.NotFound(indexHandler)
 	}
 
 	// API routes
 	r.Route("/api/pieng", func(api chi.Router) {
 		// Unauthenticated
-		api.Post("/auth/login", auth.MakeLoginHandler(database.DB, jwt))
+		api.Use(func(next http.Handler) http.Handler { return cacheControl(next, "no-store") })
+		api.With(rateLimiter(20, time.Minute)).Post("/auth/login", auth.MakeLoginHandler(database.DB, jwt))
 		api.Get("/ping", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			var lastID sql.NullInt64
-			database.DB.QueryRow(`SELECT id FROM changelog ORDER BY id DESC LIMIT 1`).Scan(&lastID)
-			if lastID.Valid {
-				json.NewEncoder(w).Encode(map[string]any{"status": "ok", "last_change": lastID.Int64})
-			} else {
-				json.NewEncoder(w).Encode(map[string]any{"status": "ok", "last_change": 0})
+			var lastID int64
+			if err := database.DB.QueryRowContext(r.Context(), `SELECT COALESCE(MAX(id),0) FROM changelog`).Scan(&lastID); err != nil {
+				http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+				return
 			}
+			json.NewEncoder(w).Encode(map[string]any{"status": "ok", "last_change": lastID})
 		})
 
 		// Authenticated
@@ -218,7 +239,7 @@ func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot stri
 		})
 	})
 
-	return r
+	return r, nil
 }
 
 func runHTTP(r *chi.Mux, addr string) {
@@ -299,27 +320,11 @@ func rateLimiter(limit int, window time.Duration) func(http.Handler) http.Handle
 	var mu sync.Mutex
 	clients := make(map[string]*client)
 
-	// Cleanup goroutine
-	go func() {
-		for {
-			time.Sleep(window)
-			mu.Lock()
-			now := time.Now()
-			for ip, c := range clients {
-				if now.After(c.resetAt) {
-					delete(clients, ip)
-				}
-			}
-			mu.Unlock()
-		}
-	}()
-
+	lastCleanup := time.Now()
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := r.RemoteAddr
-			if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-				ip = strings.Split(fwd, ",")[0]
-			}
+
 			ip = strings.TrimSpace(ip)
 			// Strip port
 			if host, _, err := net.SplitHostPort(ip); err == nil {
@@ -327,8 +332,21 @@ func rateLimiter(limit int, window time.Duration) func(http.Handler) http.Handle
 			}
 
 			mu.Lock()
-			c, ok := clients[ip]
 			now := time.Now()
+			if now.Sub(lastCleanup) >= window {
+				for key, c := range clients {
+					if !now.Before(c.resetAt) {
+						delete(clients, key)
+					}
+				}
+				lastCleanup = now
+			}
+			c, ok := clients[ip]
+			if !ok && len(clients) >= 10000 {
+				mu.Unlock()
+				http.Error(w, "rate limiter capacity reached", http.StatusTooManyRequests)
+				return
+			}
 			if !ok || now.After(c.resetAt) {
 				c = &client{count: 0, resetAt: now.Add(window)}
 				clients[ip] = c
@@ -338,6 +356,7 @@ func rateLimiter(limit int, window time.Duration) func(http.Handler) http.Handle
 			mu.Unlock()
 
 			if count > limit {
+				w.Header().Set("Retry-After", fmt.Sprint(int(window.Seconds())))
 				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 				return
 			}

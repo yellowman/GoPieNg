@@ -1,9 +1,10 @@
 package db
 
 import (
+	"context"
 	"database/sql"
-	"time"
 	_ "github.com/lib/pq"
+	"time"
 )
 
 // DB wraps sql.DB to add helper methods
@@ -13,8 +14,15 @@ type DB struct {
 
 func Open(dsn string) (*DB, error) {
 	db, err := sql.Open("postgres", dsn)
-	if err != nil { return nil, err }
-	if err := db.Ping(); err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &DB{db}, nil
 }
 
