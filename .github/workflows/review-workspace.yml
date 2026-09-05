@@ -16,11 +16,13 @@ jobs:
         with:
           go-version: '1.23.x'
       - run: |
-          go mod download
+          printf 'package auth\nimport _ "golang.org/x/crypto/argon2"\n' > internal/auth/review_dependency.go
+          go get golang.org/x/crypto@v0.33.0
+          go mod tidy
           go mod vendor
-          tar --exclude=.git -czf /tmp/gopieng-workspace.tar.gz .
+          tar --exclude=.git -czf /tmp/gopieng-deps.tar.gz go.mod go.sum vendor
       - uses: actions/upload-artifact@v4
         with:
-          name: gopieng-review-workspace
-          path: /tmp/gopieng-workspace.tar.gz
+          name: gopieng-review-deps
+          path: /tmp/gopieng-deps.tar.gz
           retention-days: 1
