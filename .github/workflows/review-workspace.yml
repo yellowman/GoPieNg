@@ -1,0 +1,26 @@
+name: review workspace
+on:
+  push:
+    branches: ['improve/hardening-20260904']
+    paths: ['.github/workflows/review-workspace.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+      - run: |
+          go mod download
+          go mod vendor
+          tar --exclude=.git -czf /tmp/gopieng-workspace.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gopieng-review-workspace
+          path: /tmp/gopieng-workspace.tar.gz
+          retention-days: 1
