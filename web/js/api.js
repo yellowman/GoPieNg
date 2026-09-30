@@ -24,28 +24,41 @@ function authed(opts = {}){
   return { ...opts, headers: h }
 }
 
-async function _fetch(url, opts = {}){
+// Errors carry the HTTP status (0 when the request never reached the
+// server), so callers can tell an expired session (401) from an outage.
+async function _fetch(url, opts = {}, withHeaders = false){
   // Prevent browser caching of API responses
   opts.cache = 'no-store'
-  const r = await fetch(url, opts)
+  let r
+  try {
+    r = await fetch(url, opts)
+  } catch (e) {
+    const err = new Error(e.message || 'network error')
+    err.status = 0
+    throw err
+  }
   if (!r.ok) {
     const msg = await r.text().catch(()=> '')
     if (r.status === 401) {
       try { localStorage.removeItem('pieng_token') } catch {}
       window.dispatchEvent(new Event('pieng:unauthorized'))
     }
-    throw new Error(msg || r.statusText)
+    const err = new Error(msg || r.statusText)
+    err.status = r.status
+    throw err
   }
   // Report the changelog IDs this mutation committed (see ChangeTracker)
   const own = parseChangeIDs(r.headers.get('X-Pieng-Change'))
   if (own.length) window.dispatchEvent(new CustomEvent('pieng:own-changes', { detail: own }))
   // Always try to parse as JSON first
   const text = await r.text()
+  let data
   try {
-    return JSON.parse(text)
+    data = JSON.parse(text)
   } catch {
-    return text
+    data = text
   }
+  return withHeaders ? { data, headers: r.headers } : data
 }
 
 export const api = {
@@ -68,7 +81,14 @@ export const api = {
   // Legacy auto-allocate (finds next available)
   allocSubnet: (nid, mask, description) => _fetch(API+`/networks/${nid}/allocate-subnet`, authed({ method:'POST', body: JSON.stringify({ mask, description: description || '' }) })),
   // New: get available subnets at specific mask
-  availableSubnetsAt: (nid, mask) => _fetch(API+`/networks/${nid}/available-subnets?mask=${mask}`, authed()),
+  // One page of free blocks: { items, total, next } (next is the cursor for
+  // the following page, or null on the last page)
+  availableSubnetsPage: async (nid, mask, after = null) => {
+    const p = new URLSearchParams({ mask: String(mask) })
+    if (after) p.set('after', after)
+    const { data, headers } = await _fetch(API+`/networks/${nid}/available-subnets?`+p.toString(), authed(), true)
+    return { items: Array.isArray(data) ? data : [], total: headers.get('X-Pieng-Total'), next: headers.get('X-Pieng-Next') }
+  },
   // New: allocate specific subnet with subdivide option
   allocSubnetAt: (nid, cidr, description, subdivide) => _fetch(API+`/networks/${nid}/allocate-subnet`, authed({ method:'POST', body: JSON.stringify({ cidr, description: description || '', subdivide }) })),
   pingCheck: (ip) => {

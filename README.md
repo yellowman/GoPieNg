@@ -32,7 +32,7 @@ export PIENG_JWT_SECRET='your-secret-key-at-least-32-characters'
 go build -o bin/pieng ./cmd/server
 
 # Run as FastCGI (default) - for use behind nginx/httpd
-./bin/pieng -socket /var/www/run/pieng.sock
+./bin/pieng -socket /var/www/run/gopieng.sock
 
 # Or run as standalone HTTP server for development
 ./bin/pieng -web
@@ -50,7 +50,7 @@ For integration with nginx, httpd, or other web servers:
 
 ```bash
 # Unix socket (recommended)
-./bin/pieng -socket /var/www/run/pieng.sock
+./bin/pieng -socket /var/www/run/gopieng.sock
 
 # TCP socket
 ./bin/pieng -addr 127.0.0.1:9000
@@ -72,14 +72,14 @@ PIENG_ADDR=:8080 ./bin/pieng -web     # Via environment
 Disable static file serving when using a separate web server for assets:
 
 ```bash
-./bin/pieng -no-static -socket /var/www/run/pieng.sock
+./bin/pieng -no-static -socket /var/www/run/gopieng.sock
 ```
 
 ## nginx Configuration Example
 
 ```nginx
 upstream pieng {
-    server unix:/var/www/run/pieng.sock;
+    server unix:/var/www/run/gopieng.sock;
 }
 
 server {
@@ -88,13 +88,15 @@ server {
     
     root /var/www/pieng/web;
     
-    # Static files served by nginx
+    # Static files served by nginx. Inner ES modules are imported without a
+    # version, so browsers must revalidate them on every load; a long cache
+    # could run a new app.js against stale modules after an upgrade.
     location /css/ {
-        expires 1h;
+        add_header Cache-Control "no-cache";
     }
     
     location /js/ {
-        expires 1h;
+        add_header Cache-Control "no-cache";
     }
     
     # API via FastCGI
@@ -119,7 +121,8 @@ server "ipam.example.com" {
     root "/var/www/pieng/web"
     
     location "/api/pieng/*" {
-        fastcgi socket "/var/www/run/pieng.sock"
+        # httpd(8) is chrooted to /var/www: this is /var/www/run/gopieng.sock
+        fastcgi socket "/run/gopieng.sock"
     }
     
     location "/*.css" {
@@ -135,6 +138,11 @@ server "ipam.example.com" {
     }
 }
 ```
+
+OpenBSD `httpd(8)` cannot set `Cache-Control`, so browsers may briefly reuse
+cached modules after an upgrade (inner ES modules are imported unversioned).
+Either let GoPieNg serve the assets itself (the default; it sends `no-cache`)
+or have users reload after deploying a new release.
 
 ## Security
 

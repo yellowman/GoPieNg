@@ -51,9 +51,11 @@ The last active administrator cannot be disabled, demoted or deleted; a signed-i
 administrator cannot delete their own account.
 
 Automatic allocation skips occupied intervals, including large IPv6 pools.
-Exhaustive subnet listings remain capped at 65,536 candidates and return 422
-when too large, rather than claiming the pool is empty. Use **Assign next** for
-large pools. The frontend now supports /31, /32, /127 and /128 allocations and
+The available-subnet listing is paginated and walks free space lazily
+(`?limit=`, default 256, max 1024; `?after=` resumes past the previous page's
+last block), reporting the pool size in `X-Pieng-Total` and the next cursor in
+`X-Pieng-Next`, so no pool size is ever materialized in full. **Assign next**
+remains the quickest way to take the first free block. The frontend now supports /31, /32, /127 and /128 allocations and
 numeric IPv6 ordering, invalidates child caches after allocation, and does not
 consume change notifications while refreshes are deferred or fail.
 
@@ -86,7 +88,11 @@ loads an optional external tree into memory before privilege drop (32 MiB cap;
 no symlinks). `-no-static` still permits a separate web server to serve assets.
 An explicit webroot is a startup snapshot; restart to pick up changes. Rebuild
 and redeploy the binary to update its embedded assets. Separately hosted assets
-must be upgraded with the backend; the module graph is cache-busted as v10.
+must be upgraded with the backend. Only the entry assets carry a version
+(`?v=16`); inner ES modules are imported unversioned, so a web server hosting
+`web/` must serve `/js/` and `/css/` with `Cache-Control: no-cache` (revalidate
+on every load), as the built-in server does. Long `expires` on `/js/` can run a
+new `app.js` against stale modules from the previous release.
 
 Chroot and supplementary-group-drop failures are now fatal, as are pledge
 failures on OpenBSD. Ensure the jail exists before starting as root. For a

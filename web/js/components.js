@@ -58,7 +58,13 @@ function render(root){
     if (disposeTree) { disposeTree(); disposeTree = null }
     root.innerHTML = ''
     const st = store
-    if (!st.user) {
+    if (!st.user && st.restoring) {
+      // A saved session is being restored; never show sign-in for an outage
+      document.body.classList.add('not-authed')
+      root.appendChild(el('div', { class: 'login' },
+        el('h1', { class: 'login-title' }, 'GoPieNg'),
+        el('p', { class: 'login-subtitle', role: 'status' }, st.restoring === 'retrying' ? 'Reconnecting to server…' : 'Loading…')))
+    } else if (!st.user) {
       document.body.classList.add('not-authed')
       root.appendChild(Login())
     } else {
@@ -539,7 +545,7 @@ function TreeNode(net, depth){
   // Child networks are allocations from their parent. Creators/admins may
   // return an empty allocation to the parent's free pool.
   if (isCreator()) {
-    if (net.parent != null) {
+    if (net.parent) {
       const removeBtn = el('button', {
         type: 'button',
         class: 'row-action remove',
@@ -885,18 +891,48 @@ async function showAvailableSubnets(parent, container, descInput, getMask, toggl
   else container.prepend(panel)
 
   try {
-    const available = await api.availableSubnetsAt(parent.id, mask)
+    const first = await api.availableSubnetsPage(parent.id, mask)
     panel.innerHTML = ''
 
-    if (!available || available.length === 0) {
+    if (first.items.length === 0) {
       panel.appendChild(bandHeader([`No available /${mask} subnets`], close))
       return
     }
 
-    panel.appendChild(bandHeader([`Available /${mask} · ${available.length}`], close))
+    // The server reports the pool's total and pages through it lazily; rows
+    // are added a page at a time, never the whole pool.
+    const total = first.total ? BigInt(first.total).toLocaleString() : String(first.items.length)
+    panel.appendChild(bandHeader([`Available /${mask} · ${total}`], close))
 
     const list = el('div', { class: 'avail-list' })
-    for (const sub of available) {
+    panel.appendChild(list)
+    const addRows = (items) => { for (const sub of items) list.appendChild(availRow(sub)) }
+    let next = first.next
+    const moreRow = el('div', { class: 'avail-more' })
+    const moreBtn = el('button', { type: 'button', class: 'btn-sm' }, 'Show more')
+    moreRow.appendChild(moreBtn)
+    moreBtn.onclick = async () => {
+      moreBtn.disabled = true
+      try {
+        const page = await api.availableSubnetsPage(parent.id, mask, next)
+        addRows(page.items)
+        next = page.next
+        if (!next) moreRow.remove()
+        else list.appendChild(moreRow)
+      } catch(e) {
+        pushToast('Failed: ' + e.message, 'error')
+      } finally {
+        moreBtn.disabled = false
+      }
+    }
+    addRows(first.items)
+    if (next) list.appendChild(moreRow)
+  } catch(e) {
+    panel.innerHTML = ''
+    panel.appendChild(bandHeader([el('span', { class: 'band-danger' }, 'Failed: ' + e.message)], close))
+  }
+
+  function availRow(sub) {
       const item = el('div', { class: 'avail-row' })
       item.appendChild(el('span', { class: 'avail-cidr' }, sub.address_range))
 
@@ -926,12 +962,7 @@ async function showAvailableSubnets(parent, container, descInput, getMask, toggl
       btns.appendChild(subdivBtn)
 
       item.appendChild(btns)
-      list.appendChild(item)
-    }
-    panel.appendChild(list)
-  } catch(e) {
-    panel.innerHTML = ''
-    panel.appendChild(bandHeader([el('span', { class: 'band-danger' }, 'Failed: ' + e.message)], close))
+      return item
   }
 }
 

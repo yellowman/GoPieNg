@@ -389,3 +389,96 @@ func AvailableSubnetsStr(parent string, children []string, mask int) []string {
 	}
 	return out
 }
+
+// FreeSubnetsPage lists free, aligned /mask blocks of parent in address order
+// without materializing the pool: it walks the gaps between occupied ranges
+// and stops after limit blocks, so its cost is O(children + limit) whatever
+// the pool size (a /8 split into /32s, or an IPv6 /32 into /64s). after, when
+// set, is the last block of the previous page; listing resumes past it.
+// It returns the page, whether more free blocks follow, and the total count
+// of free blocks in the whole pool.
+func FreeSubnetsPage(parent string, children []string, mask int, after string, limit int) ([]string, bool, *big.Int, error) {
+	p := cidrIPNet(parent)
+	if p == nil {
+		return nil, false, nil, errors.New("invalid parent network")
+	}
+	pm, bits := p.Mask.Size()
+	if bits == 0 || mask < pm || mask > bits {
+		return nil, false, nil, errors.New("invalid mask")
+	}
+	if limit < 1 {
+		return nil, false, nil, errors.New("invalid limit")
+	}
+	occupied, err := occupiedRanges(p, children)
+	if err != nil {
+		return nil, false, nil, err
+	}
+	first, last := firstAndLast(p)
+	start, high := ipToBig(first), ipToBig(last)
+	size := new(big.Int).Lsh(big.NewInt(1), uint(bits-mask))
+	one := big.NewInt(1)
+
+	// Index (block number within the pool) to resume from.
+	resume := new(big.Int)
+	if after != "" {
+		_, a, err := net.ParseCIDR(after)
+		if err != nil {
+			return nil, false, nil, errors.New("invalid cursor")
+		}
+		am, _ := a.Mask.Size()
+		if am != mask || !ContainsStr(p.String(), a.String()) {
+			return nil, false, nil, errors.New("invalid cursor")
+		}
+		af, _ := firstAndLast(a)
+		resume.Div(new(big.Int).Sub(ipToBig(af), start), size)
+		resume.Add(resume, one)
+	}
+
+	// Free gaps between (possibly overlapping) occupied ranges.
+	type gap struct{ lo, hi *big.Int }
+	gaps := []gap{}
+	pos := new(big.Int).Set(start)
+	for _, r := range occupied {
+		if r.first.Cmp(pos) > 0 {
+			gaps = append(gaps, gap{new(big.Int).Set(pos), new(big.Int).Sub(r.first, one)})
+		}
+		if next := new(big.Int).Add(r.last, one); next.Cmp(pos) > 0 {
+			pos = next
+		}
+	}
+	if pos.Cmp(high) <= 0 {
+		gaps = append(gaps, gap{pos, new(big.Int).Set(high)})
+	}
+
+	total := new(big.Int)
+	page := []string{}
+	more := false
+	for _, g := range gaps {
+		// Whole aligned blocks inside the gap: indexes [i0, i1).
+		i0 := new(big.Int).Sub(g.lo, start)
+		i0.Add(i0, new(big.Int).Sub(size, one))
+		i0.Div(i0, size)
+		i1 := new(big.Int).Sub(new(big.Int).Add(g.hi, one), start)
+		i1.Div(i1, size)
+		if i1.Cmp(i0) <= 0 {
+			continue
+		}
+		total.Add(total, new(big.Int).Sub(i1, i0))
+		if more {
+			continue
+		}
+		i := i0
+		if resume.Cmp(i) > 0 {
+			i = new(big.Int).Set(resume)
+		}
+		for ; i.Cmp(i1) < 0; i = new(big.Int).Add(i, one) {
+			if len(page) == limit {
+				more = true
+				break
+			}
+			base := new(big.Int).Add(start, new(big.Int).Mul(size, i))
+			page = append(page, fmt.Sprintf("%s/%d", bigToIP(base, bits == 128), mask))
+		}
+	}
+	return page, more, total, nil
+}
