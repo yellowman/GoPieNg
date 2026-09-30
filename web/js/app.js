@@ -124,26 +124,16 @@ mountApp(root)
   const changes = new ChangeTracker()
   let checkingNetwork = false
   
-  // Call this after a successful user-initiated mutation. Read back the
-  // server's change marker and acknowledge that exact version so the normal
-  // poll does not rebuild the tree a few seconds later.
+  // Mutations report the exact changelog IDs they created; only those are
+  // acknowledged, never the global latest marker, so another operator's
+  // concurrent change still triggers a refresh.
+  window.addEventListener('pieng:own-changes', (e) => changes.recordOwn(e.detail))
+
+  // Call this after a successful user-initiated mutation. It only delays the
+  // next refresh briefly; it never acknowledges a change marker.
   let suppressRefreshUntil = 0
-  window.syncLastChange = async () => {
-    suppressRefreshUntil = Date.now() + 10000
-    try {
-      const r = await fetch('/api/pieng/ping', {
-        method: 'GET',
-        cache: 'no-store'
-      })
-      if (r.ok) {
-        const data = await r.json()
-        changes.acknowledge(data.last_change)
-      }
-    } catch(e) {
-      // Leave the normal poll to reconcile the data if synchronization fails.
-    } finally {
-      suppressRefreshUntil = Date.now() + 1000
-    }
+  window.syncLastChange = () => {
+    suppressRefreshUntil = Date.now() + 1000
   }
   window.addEventListener('pieng:unauthorized', () => {
     store.set({ user: null, networks: [] })
@@ -177,15 +167,10 @@ mountApp(root)
           // Skip if suppressed (recent user action) or search active
           const searchActive = window.searchState && window.searchState.matches && window.searchState.matches.length > 0
           const editing = document.activeElement?.matches('input, textarea, select') || document.querySelector('.plate-overlay')
+          // A recent local mutation delays this round; the marker is not consumed.
           const userChangeSuppressed = Date.now() < suppressRefreshUntil
 
-          if (shouldRefresh && userChangeSuppressed && !searchActive && !editing) {
-            // A successful local mutation has already updated the visible UI/store.
-            // Consume its change marker instead of rebuilding the entire network tree
-            // on the next poll, which can collapse asynchronously loaded branches and
-            // disturb the current scroll position.
-            changes.acknowledge(data.last_change)
-          } else if (shouldRefresh && !searchActive && !editing) {
+          if (shouldRefresh && !userChangeSuppressed && !searchActive && !editing) {
             try {
               const list = await api.networks()
               const newNetworks = Array.isArray(list) ? list : []

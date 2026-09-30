@@ -177,6 +177,7 @@ func buildRouter(database *db.DB, jwt *auth.Manager, noStatic bool, webRoot stri
 			AllowedOrigins:   origins,
 			AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
 			AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+			ExposedHeaders:   []string{db.ChangeHeader},
 			AllowCredentials: true,
 			MaxAge:           300,
 		}))

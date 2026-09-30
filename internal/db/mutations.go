@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/lib/pq"
@@ -51,6 +52,15 @@ func lockNetwork(ctx context.Context, tx *sql.Tx, id int64) (lockedNetwork, erro
 	return n, nil
 }
 
+// changeIDs collects the changelog IDs each in-flight mutation transaction
+// creates, so the response can report exactly the caller's own changes.
+var changeIDs sync.Map // *sql.Tx -> *[]int64
+
+// ChangeHeader carries the comma-separated changelog IDs a successful
+// mutation committed. Clients acknowledge only these, never the global
+// latest change, so a concurrent operator's edit is never consumed.
+const ChangeHeader = "X-Pieng-Change"
+
 func (m mutations) write(w http.ResponseWriter, r *http.Request, role string, fn func(*sql.Tx, *auth.Claims) (any, error)) {
 	ctx := r.Context()
 	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
@@ -59,6 +69,9 @@ func (m mutations) write(w http.ResponseWriter, r *http.Request, role string, fn
 		return
 	}
 	defer tx.Rollback()
+	ids := &[]int64{}
+	changeIDs.Store(tx, ids)
+	defer changeIDs.Delete(tx)
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, mutationLockKey); err != nil {
 		respondError(w, err)
 		return
@@ -82,6 +95,13 @@ func (m mutations) write(w http.ResponseWriter, r *http.Request, role string, fn
 	if err = tx.Commit(); err != nil {
 		respondError(w, err)
 		return
+	}
+	if len(*ids) > 0 {
+		parts := make([]string, len(*ids))
+		for i, id := range *ids {
+			parts[i] = strconv.FormatInt(id, 10)
+		}
+		w.Header().Set(ChangeHeader, strings.Join(parts, ","))
 	}
 	writeJSON(w, out)
 }
@@ -109,8 +129,14 @@ func audit(ctx context.Context, tx *sql.Tx, actor *auth.Claims, prefix, action s
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO changelog(prefix, change, "user") VALUES($1::inet,$2,$3)`, prefix, string(event), actor.UserID)
-	return err
+	var id int64
+	if err = tx.QueryRowContext(ctx, `INSERT INTO changelog(prefix, change, "user") VALUES($1::inet,$2,$3) RETURNING id`, prefix, string(event), actor.UserID).Scan(&id); err != nil {
+		return err
+	}
+	if ids, ok := changeIDs.Load(tx); ok {
+		*ids.(*[]int64) = append(*ids.(*[]int64), id)
+	}
+	return nil
 }
 
 func (m mutations) host(w http.ResponseWriter, r *http.Request) {
@@ -572,6 +598,22 @@ func (m mutations) updateNetwork(w http.ResponseWriter, r *http.Request) {
 					return nil, problem(409, "resize would orphan an existing IP/description entry")
 				}
 
+				// Expansion must not absorb an address that is already allocated.
+				// Legacy rows can hold a host whose hosts.network points elsewhere
+				// while its address sits in the space being added, so look at the
+				// addresses rather than the foreign key (as createNetwork and
+				// allocateSubnet do).
+				var absorbedHost bool
+				if err := tx.QueryRowContext(ctx,
+					`SELECT EXISTS(SELECT 1 FROM hosts WHERE address <<= $2::cidr AND NOT (address <<= $1::cidr))`,
+					n.prefix.String(), requested.String(),
+				).Scan(&absorbedHost); err != nil {
+					return nil, err
+				}
+				if absorbedHost {
+					return nil, problem(409, "resize would absorb an existing host allocation")
+				}
+
 				// Retained IPv4 hosts must also remain usable host addresses. A
 				// shrink can make a formerly valid host become the new network or
 				// broadcast address even though it is still inside the prefix.
@@ -696,7 +738,10 @@ func (m mutations) deleteNetwork(w http.ResponseWriter, r *http.Request) {
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM networks WHERE parent=$1`, id).Scan(&childCount); err != nil {
 			return nil, err
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM hosts WHERE network=$1`, id).Scan(&hostCount); err != nil {
+		// Count every host inside the prefix being released, not only rows whose
+		// hosts.network points here: a misplaced legacy host in this space is
+		// still allocated and must not be handed back to the parent's free pool.
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM hosts WHERE network=$1 OR address <<= $2::cidr`, id, n.prefix.String()).Scan(&hostCount); err != nil {
 			return nil, err
 		}
 		if childCount > 0 || hostCount > 0 {

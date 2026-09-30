@@ -295,6 +295,9 @@ The default API base path is `/api/pieng`.
 - `POST /api/pieng/networks/{id}/allocate-subnet` - Allocate a child subnet (creator+; body: `{mask, description}` or `{cidr, description, subdivide}`)
 
 CIDR changes resize an existing network; they do not relocate it to an unrelated address range. Existing overlap, containment, child, host, and allocation-mask checks still apply.
+Resizing may not absorb an existing host allocation, and removing a network is refused while any host address falls inside it, including legacy hosts whose `hosts.network` points elsewhere.
+
+Successful mutations return the changelog IDs they created in the `X-Pieng-Change` response header (comma-separated). Clients should acknowledge only those IDs and refresh on any other change reported by `GET /api/pieng/ping`.
 
 ### Hosts
 - `GET /api/pieng/networks/{id}/hosts` - List hosts in network

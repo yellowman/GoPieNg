@@ -1,4 +1,5 @@
 // web/ui/assets/api.js
+import { parseChangeIDs } from './refresh.js'
 export const API = '/api/pieng'
 
 export const auth = {
@@ -35,6 +36,9 @@ async function _fetch(url, opts = {}){
     }
     throw new Error(msg || r.statusText)
   }
+  // Report the changelog IDs this mutation committed (see ChangeTracker)
+  const own = parseChangeIDs(r.headers.get('X-Pieng-Change'))
+  if (own.length) window.dispatchEvent(new CustomEvent('pieng:own-changes', { detail: own }))
   // Always try to parse as JSON first
   const text = await r.text()
   try {
