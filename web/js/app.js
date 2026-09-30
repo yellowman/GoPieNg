@@ -1,8 +1,8 @@
-import { ChangeTracker, compareAddresses } from './refresh.js?v=11'
-import { api, auth } from './api.js?v=11'
-import { store } from './store.js?v=11'
-import { mountApp, setResetScroll } from './components.js?v=11'
-import { icon, hydrateIcons } from './icons.js?v=11'
+import { ChangeTracker, compareAddresses } from './refresh.js'
+import { api, auth } from './api.js'
+import { store } from './store.js'
+import { mountApp, setResetScroll } from './components.js'
+import { icon, hydrateIcons } from './icons.js'
 
 const root = document.getElementById('app')
 
@@ -124,10 +124,26 @@ mountApp(root)
   const changes = new ChangeTracker()
   let checkingNetwork = false
   
-  // Call this after user-initiated changes to prevent auto-refresh from re-rendering
+  // Call this after a successful user-initiated mutation. Read back the
+  // server's change marker and acknowledge that exact version so the normal
+  // poll does not rebuild the tree a few seconds later.
   let suppressRefreshUntil = 0
-  window.syncLastChange = () => {
-    suppressRefreshUntil = Date.now() + 3000
+  window.syncLastChange = async () => {
+    suppressRefreshUntil = Date.now() + 10000
+    try {
+      const r = await fetch('/api/pieng/ping', {
+        method: 'GET',
+        cache: 'no-store'
+      })
+      if (r.ok) {
+        const data = await r.json()
+        changes.acknowledge(data.last_change)
+      }
+    } catch(e) {
+      // Leave the normal poll to reconcile the data if synchronization fails.
+    } finally {
+      suppressRefreshUntil = Date.now() + 1000
+    }
   }
   window.addEventListener('pieng:unauthorized', () => {
     store.set({ user: null, networks: [] })
@@ -161,9 +177,15 @@ mountApp(root)
           // Skip if suppressed (recent user action) or search active
           const searchActive = window.searchState && window.searchState.matches && window.searchState.matches.length > 0
           const editing = document.activeElement?.matches('input, textarea, select') || document.querySelector('.plate-overlay')
-          const suppressed = Date.now() < suppressRefreshUntil || editing
-          
-          if (shouldRefresh && !searchActive && !suppressed) {
+          const userChangeSuppressed = Date.now() < suppressRefreshUntil
+
+          if (shouldRefresh && userChangeSuppressed && !searchActive && !editing) {
+            // A successful local mutation has already updated the visible UI/store.
+            // Consume its change marker instead of rebuilding the entire network tree
+            // on the next poll, which can collapse asynchronously loaded branches and
+            // disturb the current scroll position.
+            changes.acknowledge(data.last_change)
+          } else if (shouldRefresh && !searchActive && !editing) {
             try {
               const list = await api.networks()
               const newNetworks = Array.isArray(list) ? list : []

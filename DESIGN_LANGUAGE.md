@@ -226,7 +226,7 @@ Tree columns:
 |---|---|---|
 | `--col-address` | 248px | indent + disclosure + CIDR: a full-length IPv4 prefix (`255.255.255.255/32`, 140px in 13px mono) at depth 4 still gets a 16px gap before its description |
 | `--col-owner`, `--col-account` | 120px each | |
-| `--col-actions` | 100px | 36px settings slot + 64px primary slot |
+| `--col-settings`, `--col-primary` | 36px, 64px | action slots: settings (administrators), remove (creators), primary |
 
 ### 3.4 Radii and elevation
 
@@ -368,6 +368,7 @@ so keyboard focus can't reach anything behind the scrim.
   row hairlines and the tools end where the row actions end.
 - Left: the page title in section-label style (§6.2) — `NETWORKS`,
   `ACTIVITY`, `USERS`, `ACCOUNT`.
+- After the title, page actions for administrators: `Add network` on Browse.
 - Right: page tools. Only Browse has any. Search is contextual to the IPAM
   workspace — too operational to bury in navigation — so it lives here, not in
   the sidebar and not on other pages.
@@ -449,9 +450,16 @@ inside. No zebra striping; the host table's odd/even fills go.
   row at once. It grows and never shrinks while the tree is shown, so
   expanding and collapsing doesn't make columns jump. Addresses are never
   truncated.
-- The actions column is the same width on every row, and rows without a
-  settings control leave that slot empty. (Today the ⚙ pushes owner and
-  account left on administrators' container rows.)
+- The actions column has the same slots on every row for a given user:
+  settings (administrators, every network), remove (creators, child
+  networks), then the primary action. A row where a slot doesn't apply —
+  remove on a top-level network — leaves it empty, so owner and account
+  never shift. (Before this redesign, the ⚙ pushed owner and account left on
+  administrators' container rows.)
+- Administrators resize a network by editing its prefix in place: `Enter`
+  asks for confirmation on a plate headed `RESIZE`, `Esc` or leaving the
+  field cancels. The remove slot (trash icon, `--danger-fill` on hover)
+  confirms on a `REMOVE` plate.
 - Row actions sit flush right and span the full row height, cancelling the
   row's vertical padding.
 - Indentation carries nesting. If tree guides are ever added, they are 1px
@@ -464,7 +472,7 @@ inside. No zebra striping; the host table's odd/even fills go.
 | Description | inline-editable | sans 13px, `--text-secondary`, ellipsis |
 | Owner | inline-editable | sans 12px, `--accent-identity`, ellipsis |
 | Account | inline-editable | sans 12px, `--text-muted`, ellipsis |
-| Actions | settings slot (36px) + primary slot (64px) | row actions (§7.1) |
+| Actions | settings (36px) · remove (36px) · primary (64px) | row actions (§7.1) |
 
 | State | Treatment |
 |---|---|
@@ -533,7 +541,9 @@ into cards. Their inline behavior is excellent for an IPAM and stays.
 | Allocation | top of an open container's children (creators) | description input (240px) · `Size` · mask selector · `Assign next` · … `Available` |
 | Available subnets | `Available` in the allocation band | header, then available-subnet rows; max 300px with its own scroll, as today |
 | Hosts | `hosts` on a leaf network | IP input (mono, 144px) · description input · `Add` · … `All addresses`; then host rows |
-| Network settings | the settings row action (administrators, containers) | header, 12px help line, mask grid, `All` `None` `Common` · … `Save` |
+| Network settings | the settings row action (administrators, any network) | header, help line, `Allow this network to be subdivided`, mask grid, `All` `None` `Common` · … `Save` |
+| Add network | `Add network` in the toolbar (administrators, Browse) | CIDR (mono) · description · `Subdividable \| Hosts` · `Add network`; above the tree |
+| Password reset | `password` on another user's row (administrators) | a band row under that user: new password · confirm · `Reset password`; errors inline |
 
 - **Allocation.** The mask selector is a 4px-gap group of 28px mono chips:
   preferred sizes (up to parent + 4) labeled in `--accent-alloc`, others in
@@ -631,6 +641,7 @@ keep at least 4.5:1 label contrast in every state.
 | `close` | band close |
 | `moon`, `sun` | theme |
 | `sign-out`, `menu` | sign out, mobile drawer |
+| `plus`, `trash` | `Add network`, remove a subnet allocation |
 
 ## 8. Pages
 

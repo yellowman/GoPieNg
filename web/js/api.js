@@ -52,6 +52,7 @@ export const api = {
     if (q) p.set('q', q)
     return _fetch(API+'/networks?'+p.toString(), authed())
   },
+  createNetwork: (cidr, description, subdivide) => _fetch(API+'/networks', authed({ method:'POST', body: JSON.stringify({ cidr, description: description || '', subdivide }) })),
   network: (id) => _fetch(API+'/networks/'+id, authed()),
   updateNetwork: (id, patch) => _fetch(API+'/networks/'+id, authed({ method:'PATCH', body: JSON.stringify(patch) })),
   deleteNetwork: (id) => _fetch(API+'/networks/'+id, authed({ method:'DELETE' })),

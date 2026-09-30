@@ -1,8 +1,8 @@
-import { compareAddresses } from './refresh.js?v=11'
-import { api, auth } from './api.js?v=11'
-import { store } from './store.js?v=11'
-import { el, pushToast, showWarningModal, showConfirmModal, scrollBehavior } from './util.js?v=11'
-import { icon } from './icons.js?v=11'
+import { compareAddresses } from './refresh.js'
+import { api, auth } from './api.js'
+import { store } from './store.js'
+import { el, pushToast, showWarningModal, showConfirmModal, scrollBehavior } from './util.js'
+import { icon } from './icons.js'
 
 // Track expanded nodes
 const expanded = new Set()
@@ -189,6 +189,28 @@ function setNodeExpanded(wrapper, open){
 
 function NetworkTree(){
   const tree = el('div', { class: 'net-tree' })
+  const addSlot = el('div', { class: 'add-network-slot' })
+  const wrap = el('div', { class: 'tree-wrap' }, addSlot, tree)
+
+  // Toolbar "Add network" (administrators) opens a band above the tree
+  const addBtn = document.getElementById('addNetworkBtn')
+  if (addBtn) {
+    addBtn.setAttribute('aria-expanded', 'false')
+    addBtn.onclick = () => {
+      if (addSlot.firstChild) {
+        addSlot.replaceChildren()
+        addBtn.setAttribute('aria-expanded', 'false')
+        return
+      }
+      addSlot.appendChild(AddNetworkBand(() => {
+        addSlot.replaceChildren()
+        addBtn.setAttribute('aria-expanded', 'false')
+        addBtn.focus()
+      }))
+      addBtn.setAttribute('aria-expanded', 'true')
+      addSlot.querySelector('input')?.focus()
+    }
+  }
 
   function renderTree() {
     tree.innerHTML = ''
@@ -333,7 +355,72 @@ function NetworkTree(){
   renderTree()
   disposeTree = watchAddressColumn(tree)
 
-  return tree
+  return wrap
+}
+
+// Top-level network creation (administrators)
+function AddNetworkBand(onClose){
+  const band = el('div', { class: 'band add-network' })
+  band.appendChild(bandHeader(['Add network'], onClose))
+
+  const line = el('div', { class: 'band-row' })
+  const cidrInput = el('input', { type: 'text', class: 'mono add-cidr', placeholder: 'CIDR, e.g. 10.0.0.0/8', 'aria-label': 'Network CIDR', autocomplete: 'off', spellcheck: 'false' })
+  const descInput = el('input', { type: 'text', class: 'alloc-desc', placeholder: 'Description', 'aria-label': 'Description', autocomplete: 'off' })
+
+  let subdivide = true
+  const kind = el('div', { class: 'segmented', role: 'group', 'aria-label': 'Network type' })
+  const kinds = [['Subdividable', true], ['Hosts', false]].map(([label, value]) => {
+    const b = el('button', { type: 'button', 'aria-pressed': String(value === subdivide) }, label)
+    b.onclick = () => {
+      subdivide = value
+      kinds.forEach(([k, v]) => k.setAttribute('aria-pressed', String(v === subdivide)))
+    }
+    kind.appendChild(b)
+    return [b, value]
+  })
+
+  const createBtn = el('button', { type: 'button', class: 'btn-alloc' }, 'Add network')
+  createBtn.onclick = async () => {
+    const cidr = cidrInput.value.trim()
+    if (!cidr) {
+      pushToast('Network CIDR required', 'error')
+      cidrInput.focus()
+      return
+    }
+
+    createBtn.disabled = true
+    try {
+      const created = await api.createNetwork(cidr, descInput.value.trim(), subdivide)
+      onClose()
+      if (window.syncLastChange) window.syncLastChange()
+
+      // The POST is committed before this refresh. Add its response to the
+      // store immediately so a transient GET failure cannot be mistaken for
+      // a failed creation or encourage a duplicate retry.
+      store.set({ networks: [...store.networks, created] })
+      pushToast('Network created', 'info')
+
+      try {
+        const list = await api.networks()
+        store.set({ networks: Array.isArray(list) ? list : store.networks })
+      } catch(e) {
+        pushToast('Network created, but refresh failed: ' + e.message, 'error')
+      }
+    } catch(e) {
+      pushToast('Failed: ' + e.message, 'error')
+    } finally {
+      createBtn.disabled = false
+    }
+  }
+
+  band.onkeydown = (e) => {
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); createBtn.click() }
+    if (e.key === 'Escape') { e.preventDefault(); onClose() }
+  }
+
+  line.append(cidrInput, descInput, kind, createBtn)
+  band.appendChild(line)
+  return band
 }
 
 // The address column is one fixed track shared by every row, so description,
@@ -402,7 +489,7 @@ function TreeNode(net, depth){
   })
   toggle.querySelector('.icon').replaceWith(icon('chevron-right', 12))
   address.appendChild(toggle)
-  address.appendChild(el('span', { class: 'tree-cidr' }, net.address_range || '?'))
+  address.appendChild(cidrCell(net))
   row.appendChild(address)
 
   const canEdit = isEditor()
@@ -425,15 +512,18 @@ function TreeNode(net, depth){
   account.appendChild(editableText({ value: net.account, hint: 'account', label: 'account', canEdit, onSave: saveField('account', 'Account updated') }))
   row.appendChild(account)
 
-  // Actions - fixed width: settings slot (reserved) + primary slot
+  // Actions - fixed width: settings slot + remove slot (reserved for every
+  // row the current user could act on) + primary slot
   const actions = el('div', { class: 'tree-actions' })
 
-  if (isSubdivide && isAdmin()) {
+  // Network settings are available to admins on every network, so an empty
+  // leaf network can be enabled for subdivision before its first child.
+  if (isAdmin()) {
     const settingsBtn = el('button', {
       type: 'button',
       class: 'row-action settings',
-      'aria-label': 'Allocation sizes for ' + net.address_range,
-      title: 'Edit allocation sizes',
+      'aria-label': 'Settings for ' + net.address_range,
+      title: 'Edit network settings',
       'aria-expanded': 'false'
     })
     settingsBtn.appendChild(icon('settings'))
@@ -444,6 +534,44 @@ function TreeNode(net, depth){
     actions.appendChild(settingsBtn)
   } else {
     actions.appendChild(el('span', { class: 'row-slot', 'aria-hidden': 'true' }))
+  }
+
+  // Child networks are allocations from their parent. Creators/admins may
+  // return an empty allocation to the parent's free pool.
+  if (isCreator()) {
+    if (net.parent != null) {
+      const removeBtn = el('button', {
+        type: 'button',
+        class: 'row-action remove',
+        'aria-label': 'Remove subnet allocation ' + net.address_range,
+        title: 'Remove subnet allocation'
+      })
+      removeBtn.appendChild(icon('trash'))
+      removeBtn.onclick = async (e) => {
+        e.stopPropagation()
+        const confirmed = await showConfirmModal(
+          `Remove subnet allocation ${net.address_range}? This is only allowed when it contains no child subnets or host/IP entries.`,
+          { heading: 'Remove', confirmLabel: 'Remove' }
+        )
+        if (!confirmed) return
+
+        removeBtn.disabled = true
+        try {
+          await api.deleteNetwork(net.id)
+          expanded.delete(net.id)
+          store.networks = store.networks.filter(n => n.id !== net.id)
+          if (window.syncLastChange) window.syncLastChange()
+          pushToast(`Removed subnet allocation ${net.address_range}`, 'info')
+          store.set({})
+        } catch(e) {
+          pushToast('Remove failed: ' + e.message, 'error')
+          removeBtn.disabled = false
+        }
+      }
+      actions.appendChild(removeBtn)
+    } else {
+      actions.appendChild(el('span', { class: 'row-slot', 'aria-hidden': 'true' }))
+    }
   }
 
   const primaryLabel = isSubdivide ? 'open' : 'hosts'
@@ -510,6 +638,80 @@ function TreeNode(net, depth){
   }
 
   return wrapper
+}
+
+// CIDR - administrators can resize an existing network in place. Enter asks
+// for confirmation; Escape or leaving the field cancels.
+function cidrCell(net){
+  const cell = el('span', { class: 'tree-cidr' })
+  const text = el('span', { class: 'cidr-text' }, net.address_range || '?')
+  cell.appendChild(text)
+  if (!isAdmin()) return cell
+
+  text.classList.add('editable')
+  text.tabIndex = 0
+  text.setAttribute('role', 'button')
+  text.setAttribute('aria-label', 'Resize network ' + net.address_range)
+  text.title = 'Click to resize network'
+
+  const input = el('input', { type: 'text', class: 'cidr-edit mono hidden', value: net.address_range || '', 'aria-label': 'New CIDR for ' + net.address_range, spellcheck: 'false', autocomplete: 'off' })
+  cell.appendChild(input)
+
+  let submitting = false
+  let refocus = false
+  const close = () => {
+    input.value = net.address_range || ''
+    input.classList.add('hidden')
+    text.classList.remove('hidden')
+    if (refocus) { refocus = false; text.focus() }
+  }
+  const open = (e) => {
+    e?.stopPropagation()
+    input.value = net.address_range || ''
+    input.style.width = Math.max(18, input.value.length + 2) + 'ch'
+    text.classList.add('hidden')
+    input.classList.remove('hidden')
+    input.focus()
+    input.select()
+  }
+  const submit = async () => {
+    if (submitting) return
+    const next = input.value.trim()
+    if (!next || next === net.address_range) { close(); return }
+
+    submitting = true
+    try {
+      const confirmed = await showConfirmModal(
+        `Resize network ${net.address_range} to ${next}? Existing hosts and child networks must remain inside the new range, and expansion cannot overlap another allocation.`,
+        { heading: 'Resize', confirmLabel: 'Resize' }
+      )
+      if (!confirmed) { close(); return }
+      await api.updateNetwork(net.id, { address_range: next })
+      net.address_range = next
+      text.textContent = next
+      if (window.syncLastChange) window.syncLastChange()
+      pushToast('Network resized', 'info')
+      store.set({})
+    } catch(e) {
+      pushToast('Resize failed: ' + e.message, 'error')
+    } finally {
+      submitting = false
+      close()
+    }
+  }
+
+  text.onclick = open
+  text.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === 'F2') { e.preventDefault(); open(e) }
+  }
+  input.oninput = () => { input.style.width = Math.max(18, input.value.length + 2) + 'ch' }
+  input.onblur = () => { if (!submitting) close() }
+  input.onkeydown = (e) => {
+    e.stopPropagation()
+    if (e.key === 'Enter') { e.preventDefault(); refocus = true; submit() }
+    if (e.key === 'Escape') { e.preventDefault(); refocus = true; close() }
+  }
+  return cell
 }
 
 async function loadTreeChildren(container, parent, depth){
@@ -771,8 +973,14 @@ function showNetworkSettings(net, wrapper, depth, toggleBtn){
   const close = () => { panel.remove(); toggleBtn?.setAttribute('aria-expanded', 'false') }
   toggleBtn?.setAttribute('aria-expanded', 'true')
 
-  panel.appendChild(bandHeader(['Allowed sizes · ', el('span', { class: 'mono' }, net.address_range)], close))
-  panel.appendChild(el('p', { class: 'band-help' }, 'Select which subnet sizes can be allocated. Checked = allowed.'))
+  panel.appendChild(bandHeader(['Settings · ', el('span', { class: 'mono' }, net.address_range)], close))
+  panel.appendChild(el('p', { class: 'band-help' }, 'Enable subdivision and select which subnet sizes can be allocated.'))
+
+  const subdivideLabel = el('label', { class: 'mask-option subdivide-option' })
+  const subdivideCheckbox = el('input', { type: 'checkbox' })
+  subdivideCheckbox.checked = !!net.subdivide
+  subdivideLabel.append(subdivideCheckbox, el('span', {}, 'Allow this network to be subdivided'))
+  panel.appendChild(subdivideLabel)
 
   const grid = el('div', { class: 'mask-grid' })
 
@@ -825,10 +1033,14 @@ function showNetworkSettings(net, wrapper, depth, toggleBtn){
   saveBtn.onclick = async () => {
     const selected = checkboxes.filter(cb => cb.checked).map(cb => parseInt(cb.value))
     try {
-      await api.updateNetwork(net.id, { valid_masks: selected })
+      await api.updateNetwork(net.id, {
+        subdivide: subdivideCheckbox.checked,
+        valid_masks: selected
+      })
+      net.subdivide = subdivideCheckbox.checked
       net.valid_masks = selected
       if (window.syncLastChange) window.syncLastChange()
-      pushToast('Saved allocation sizes', 'info')
+      pushToast('Saved network settings', 'info')
       close()
       store.set({}) // Refresh to show new options
     } catch(e) {
@@ -1155,13 +1367,16 @@ function UsersPage(){
   const addBtn = el('button', { type: 'button', class: 'btn-primary' }, 'Add user')
 
   addBtn.onclick = async () => {
-    if (!userInput.value.trim() || !passInput.value.trim()) {
+    const username = userInput.value.trim()
+    if (!username || !passInput.value.trim()) {
       pushToast('Username and password required', 'error')
+      ;(username ? passInput : userInput).focus()
       return
     }
+    addBtn.disabled = true
     try {
       const roles = newRole.value ? [newRole.value] : []
-      await api.createUser(userInput.value.trim(), passInput.value, roles)
+      await api.createUser(username, passInput.value, roles)
       userInput.value = ''
       passInput.value = ''
       newRole.value = ''
@@ -1169,7 +1384,12 @@ function UsersPage(){
       store.set({})
     } catch(e) {
       pushToast('Failed: ' + e.message, 'error')
+    } finally {
+      addBtn.disabled = false
     }
+  }
+  for (const field of [userInput, passInput, newRole]) {
+    field.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addBtn.click() } }
   }
 
   addForm.append(userInput, passInput, newRole, addBtn)
@@ -1235,6 +1455,14 @@ function UsersPage(){
       }
       actTd.appendChild(statusBtn)
 
+      // Administrators can reset another user's password. The backend
+      // hashes the replacement with Argon2id before storing it.
+      if (user.id !== store.user?.id) {
+        const resetBtn = el('button', { type: 'button', class: 'btn-sm btn-toggle', 'aria-expanded': 'false', 'aria-label': 'Reset password for ' + user.username }, 'password')
+        resetBtn.onclick = () => togglePasswordReset(tr, user, resetBtn)
+        actTd.appendChild(resetBtn)
+      }
+
       const delBtn = el('button', { type: 'button', class: 'btn-sm btn-danger', 'aria-label': 'Delete user ' + user.username }, 'del')
       delBtn.onclick = async () => {
         const confirmed = await showConfirmModal('Delete user ' + user.username + '?')
@@ -1266,6 +1494,69 @@ function UsersPage(){
   selfPassword.appendChild(el('div', { class: 'band' }, PasswordChangeForm()))
 
   return [list, selfPassword]
+}
+
+// Inline password reset for another user: a band row under the user's row
+function togglePasswordReset(tr, user, toggleBtn){
+  const existing = tr.nextElementSibling
+  if (existing && existing.classList.contains('reset-row')) {
+    existing.remove()
+    toggleBtn.setAttribute('aria-expanded', 'false')
+    return
+  }
+
+  const row = el('tr', { class: 'reset-row' })
+  const cell = el('td', { colspan: '4' })
+  const band = el('div', { class: 'band' })
+  const close = () => {
+    row.remove()
+    toggleBtn.setAttribute('aria-expanded', 'false')
+    toggleBtn.focus()
+  }
+  band.appendChild(bandHeader(['Reset password · ' + user.username], close))
+
+  const form = el('div', { class: 'form-row' })
+  const password = el('input', { type: 'password', placeholder: 'New password', autocomplete: 'new-password', 'aria-label': 'New password for ' + user.username })
+  const confirm = el('input', { type: 'password', placeholder: 'Confirm new password', autocomplete: 'new-password', 'aria-label': 'Confirm new password' })
+  const submitBtn = el('button', { type: 'button', class: 'btn-primary' }, 'Reset password')
+  const error = el('p', { class: 'band-danger hidden', role: 'alert', style: 'margin: var(--space-2) 0 0' })
+
+  const fail = (msg, field) => {
+    error.textContent = msg
+    error.classList.remove('hidden')
+    field.focus()
+  }
+  submitBtn.onclick = async () => {
+    error.classList.add('hidden')
+    if (password.value.length < 8) return fail('Password must be at least 8 characters', password)
+    if (password.value !== confirm.value) return fail('Passwords do not match', confirm)
+    submitBtn.disabled = true
+    try {
+      await api.updateUser(user.id, { password: password.value })
+      pushToast('Password reset for ' + user.username, 'info')
+      close()
+    } catch(e) {
+      fail('Failed: ' + e.message, password)
+    } finally {
+      submitBtn.disabled = false
+    }
+  }
+  password.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); confirm.focus() }
+    if (e.key === 'Escape') close()
+  }
+  confirm.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submitBtn.click() }
+    if (e.key === 'Escape') close()
+  }
+
+  form.append(password, confirm, submitBtn)
+  band.append(form, error)
+  cell.appendChild(band)
+  row.appendChild(cell)
+  tr.after(row)
+  toggleBtn.setAttribute('aria-expanded', 'true')
+  password.focus()
 }
 
 function PasswordChangeForm(){

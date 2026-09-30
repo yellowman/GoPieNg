@@ -35,7 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_hosts_network ON hosts(network);
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(32) UNIQUE NOT NULL,
-    password TEXT NOT NULL,          -- RFC 2307 format: {SSHA256}base64(hash+salt)
+    password TEXT NOT NULL,          -- Argon2id PHC string; legacy RFC2307 hashes are accepted and upgraded after login
     email TEXT,
     status INTEGER NOT NULL DEFAULT 1         -- 1=active, 0=disabled
 );
