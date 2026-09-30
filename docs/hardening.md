@@ -91,10 +91,9 @@ and redeploy the binary to update its embedded assets. Separately hosted assets
 must be upgraded with the backend. The whole module graph carries one asset
 version (`?v=17` on `styles.css`, `app.js` and every internal import;
 `web/js/version.test.mjs` enforces it), bumped with every frontend release so
-an upgrade loads entirely new URLs even where an older configuration cached
-`/js/` for an hour. A web server hosting `web/` should still serve `/js/` and
-`/css/` with `Cache-Control: no-cache` (revalidate on every load), as the
-built-in server does.
+an upgrade loads entirely new URLs. `/js/` and `/css/` therefore need no cache
+headers. `index.html` carries the version, so a web server hosting `web/` must
+serve it with `Cache-Control: no-cache`.
 
 Chroot and supplementary-group-drop failures are now fatal, as are pledge
 failures on OpenBSD. Ensure the jail exists before starting as root. For a

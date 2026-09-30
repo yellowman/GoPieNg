@@ -88,13 +88,11 @@ server {
     
     root /var/www/pieng/web;
     
-    # Static files served by nginx. Every release versions the whole module
-    # graph (?v=N); revalidating as well keeps any stale copy from running.
-    location /css/ {
-        add_header Cache-Control "no-cache";
-    }
-    
-    location /js/ {
+    # Static files are served from root. /js/ and /css/ need no cache
+    # headers: every release versions the whole module graph (?v=N), so new
+    # releases load new URLs. index.html carries that version, so it alone
+    # must be revalidated.
+    location = /index.html {
         add_header Cache-Control "no-cache";
     }
     
@@ -139,9 +137,9 @@ server "ipam.example.com" {
 ```
 
 OpenBSD `httpd(8)` cannot set `Cache-Control`. Each release versions the entry
-assets and every module import (`?v=N`), so a new release still loads fresh
-modules; GoPieNg serving the assets itself (the default) also sends
-`no-cache`.
+assets and every module import (`?v=N`), so cached modules are never reused
+across releases; only `index.html` may be heuristically cached, so reload once
+after an upgrade if the old frontend is still shown.
 
 ## Security
 
