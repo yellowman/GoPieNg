@@ -33,29 +33,12 @@ export function el(tag, attrs={}, ...children){
 }
 
 
-let _toast;
-export function notify(msg, type='info', timeout=3500){
-  if (!_toast){
-    _toast = document.createElement('div')
-    _toast.id = 'toast'
-    _toast.style.cssText = 'position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:9999;'
-    document.body.appendChild(_toast)
-  }
-  const el = document.createElement('div')
-  el.className = 'toast ' + type
-  el.textContent = msg
-  el.style.cssText = 'background:#1b1b1b;border:1px solid #333;color:#eee;padding:8px 12px;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,.35);font-size:13px;'
-  _toast.appendChild(el)
-  setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateY(6px)'; setTimeout(()=> el.remove(), 200) }, timeout)
-}
-
-
 export function pushToast(msg, type='info', timeout=null){
   // Default timeouts: errors stay longer
   if (timeout === null) {
     timeout = type === 'error' ? 8000 : type === 'warning' ? 6000 : 3500
   }
-  
+
   let root = document.getElementById('toastRoot')
   if (!root) {
     root = document.createElement('div')
@@ -65,70 +48,120 @@ export function pushToast(msg, type='info', timeout=null){
   }
   const el = document.createElement('div')
   el.className = 'toast ' + type
+  el.setAttribute('role', type === 'error' ? 'alert' : 'status')
   el.textContent = msg
   root.appendChild(el)
   setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateY(6px)'; setTimeout(()=> el.remove(), 200) }, timeout)
 }
 
-// Modal warning - centered, click anywhere to dismiss
-export function showWarningModal(msg) {
-  const overlay = document.createElement('div')
-  overlay.className = 'warning-modal-overlay'
-  
-  const modal = document.createElement('div')
-  modal.className = 'warning-modal'
-  modal.textContent = msg
-  
-  overlay.appendChild(modal)
-  document.body.appendChild(overlay)
-  
-  const dismiss = () => {
-    overlay.remove()
-  }
-  overlay.addEventListener('click', dismiss)
+// Addresses and prefixes inside plate copy are set in mono
+const ADDRESS_RE = /(\b\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?\b|\b[0-9a-fA-F]{0,4}(?::[0-9a-fA-F]{0,4}){2,7}(?:\/\d{1,3})?)/
+function plateBody(id, msg){
+  const p = document.createElement('p')
+  p.className = 'plate-body'
+  p.id = id
+  String(msg).split(ADDRESS_RE).forEach((part, i) => {
+    if (!part) return
+    if (i % 2) {
+      const code = document.createElement('span')
+      code.className = 'mono'
+      code.textContent = part
+      p.appendChild(code)
+    } else {
+      p.appendChild(document.createTextNode(part))
+    }
+  })
+  return p
 }
 
-export function showConfirmModal(msg) {
+let plateSeq = 0
+function openPlate({ heading, msg, role, dismissable }){
+  const n = ++plateSeq
+  const returnFocus = document.activeElement
+  const overlay = document.createElement('div')
+  overlay.className = 'plate-overlay' + (dismissable ? ' dismissable' : '')
+
+  const plate = document.createElement('div')
+  plate.className = 'plate'
+  plate.tabIndex = -1
+  plate.setAttribute('role', role)
+  plate.setAttribute('aria-modal', 'true')
+  plate.setAttribute('aria-labelledby', `plate-h-${n}`)
+  plate.setAttribute('aria-describedby', `plate-b-${n}`)
+
+  const h = document.createElement('h2')
+  h.className = 'plate-heading'
+  h.id = `plate-h-${n}`
+  h.textContent = heading
+  plate.appendChild(h)
+  plate.appendChild(plateBody(`plate-b-${n}`, msg))
+  overlay.appendChild(plate)
+
+  const close = () => {
+    overlay.remove()
+    if (returnFocus && document.contains(returnFocus)) returnFocus.focus()
+  }
+  // Keep Tab inside the plate
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return
+    const items = [...plate.querySelectorAll('button')]
+    if (items.length === 0) { e.preventDefault(); return }
+    const i = items.indexOf(document.activeElement)
+    const next = e.shiftKey ? (i <= 0 ? items.length - 1 : i - 1) : (i + 1) % items.length
+    e.preventDefault()
+    items[next].focus()
+  })
+  return { overlay, plate, close }
+}
+
+// Warning plate - click anywhere or Esc to dismiss
+export function showWarningModal(msg, heading = 'Warning') {
+  const { overlay, plate, close } = openPlate({ heading, msg, role: 'alertdialog', dismissable: true })
+  const hint = document.createElement('p')
+  hint.className = 'plate-hint'
+  hint.textContent = 'Esc or click anywhere to dismiss'
+  plate.appendChild(hint)
+  overlay.addEventListener('click', close)
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close() }
+  })
+  document.body.appendChild(overlay)
+  plate.focus()
+}
+
+// Delete confirmation plate - resolves true only for an explicit Delete
+export function showConfirmModal(msg, { heading = 'Delete', confirmLabel = 'Delete' } = {}) {
   return new Promise((resolve) => {
-    const overlay = document.createElement('div')
-    overlay.className = 'warning-modal-overlay'
-    
-    const modal = document.createElement('div')
-    modal.className = 'warning-modal confirm-modal'
-    modal.onclick = (e) => e.stopPropagation() // Prevent overlay dismiss
-    
-    const text = document.createElement('div')
-    text.className = 'confirm-text'
-    text.textContent = msg
-    modal.appendChild(text)
-    
+    const { overlay, plate, close } = openPlate({ heading, msg, role: 'alertdialog', dismissable: false })
+    const finish = (result) => { close(); resolve(result) }
+
     const buttons = document.createElement('div')
-    buttons.className = 'confirm-buttons'
-    
-    const okBtn = document.createElement('button')
-    okBtn.className = 'confirm-ok'
-    okBtn.textContent = 'Delete'
-    okBtn.onclick = () => {
-      overlay.remove()
-      resolve(true)
-    }
-    
+    buttons.className = 'plate-actions'
     const cancelBtn = document.createElement('button')
-    cancelBtn.className = 'confirm-cancel'
+    cancelBtn.type = 'button'
+    cancelBtn.className = 'plate-cancel'
     cancelBtn.textContent = 'Cancel'
-    cancelBtn.onclick = () => {
-      overlay.remove()
-      resolve(false)
-    }
-    
-    buttons.appendChild(cancelBtn)
-    buttons.appendChild(okBtn)
-    modal.appendChild(buttons)
-    
-    overlay.appendChild(modal)
+    cancelBtn.onclick = () => finish(false)
+    const okBtn = document.createElement('button')
+    okBtn.type = 'button'
+    okBtn.className = 'plate-delete'
+    okBtn.textContent = confirmLabel
+    okBtn.onclick = () => finish(true)
+    buttons.append(cancelBtn, okBtn)
+    plate.appendChild(buttons)
+
+    // Clicking the scrim cancels
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) finish(false) })
+    overlay.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false) }
+    })
     document.body.appendChild(overlay)
-    
     // Focus cancel by default for safety
     cancelBtn.focus()
   })
+}
+
+// Motion preference for scrollIntoView
+export function scrollBehavior(){
+  return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
 }

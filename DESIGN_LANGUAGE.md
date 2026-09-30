@@ -21,6 +21,21 @@ The budget:
 
 Less UI surrounding the data — not less personality in the data.
 
+The hierarchy, top to bottom:
+
+```
+GLOBAL             192 / 48 sidebar — identity, navigation, theme, health
+WORKSPACE          40px search/tool band
+NETWORK            38px structural row; 16px/depth indentation inside a 248px
+                   address region; description | owner | account | settings | action
+DETAIL             32px hosts / available prefixes / activity / users
+INLINE PANELS      8×12 padding, hairline boundaries, no card-within-card
+EXCEPTION SURFACES warning / confirmation plates, intentionally distinctive
+```
+
+Network rows at 38px and detail rows at 32px give the tree slightly more
+visual authority than the data beneath it without wasting space.
+
 ## 1. Principles
 
 1. **Data first.** Remove chrome before adding any. Rows, hairlines and
@@ -74,7 +89,7 @@ or knows which theme is active. Dark is the `:root` default, and
 | `--accent-network` | address, primary network interaction | CIDRs, host addresses, log prefixes, wordmark, selected mask, primary buttons, focus ring, active-nav marker | `#4ecdc4` | `#0f766e` |
 | `--accent-subdivide` | subdivision | container-network wash, `open`, `Subdivide` | `#f7dc6f` | `#854d0e` |
 | `--accent-host` | host access | leaf-network wash, `hosts`, the `Hosts` search mode | `#5dade2` | `#1d4ed8` |
-| `--accent-alloc` | allocation, success | preferred masks, `Assign next`, `Add`, `Assign`, server-ok dot, search match | `#58d68d` | `#047857` |
+| `--accent-alloc` | allocation, success | preferred masks, `Assign next`, `Add`, `Assign`, server-ok dot, search match (solid only for a band's default action, §7.1) | `#58d68d` | `#047857` |
 | `--accent-identity` | owner, identity | owner column, usernames | `#af7ac5` | `#7c3aed` |
 | `--danger` | destructive, alert | delete, errors, offline state | `#e74c3c` | `#dc2626` |
 
@@ -119,9 +134,9 @@ components.
 | `--wash-used` | 10% `--accent-network` | used addresses in the *All addresses* view |
 | `--wash-danger` | 10% `--danger` | inline errors (sign-in) |
 
-**Alarm plate** — theme-invariant (§9.1). The plate sits on a 70% black scrim
-in both themes, so it looks the same in both; its controls use only these
-tokens.
+**Alarm plate** — theme-invariant (§9.1). The plate is its own visual object,
+not theme chrome: it sits on a 70% black scrim and looks the same in both
+themes. `Delete` uses these tokens; `Cancel` is deliberately neutral (§9.1).
 
 | Token | Value |
 |---|---|
@@ -130,6 +145,7 @@ tokens.
 | `--plate-text` | `#f5c6c6` |
 | `--plate-muted` | `#aa8888` |
 | `--plate-danger` | `#c9302c` (white label 5.3:1; today's `#d9534f` gives 3.96:1) |
+| `--plate-danger-hover` | `#b02a27` |
 | `--plate-glow` | `rgb(217 83 79 / 0.4)` |
 
 ### 3.2 Spacing: the 4px grid
@@ -284,7 +300,8 @@ work surface.
 │                  │      │    │
 │                  │      │    │
 │ ● server ok      │      │ ●  │
-│ admin            │      │    │
+│ ccappuccio       │      │    │
+│ administrator    │      │    │
 │ ☾  Dark          │      │ ☾  │
 │ ↪  Sign out      │      │ ↪  │
 └──────────────────┘      └────┘
@@ -317,7 +334,9 @@ Footer rows:
 - **Server state** — an 8px dot and a mono 12px readout (`server ok`, `auth`,
   `err`). The dot is `--accent-alloc` when healthy, `--danger` on error and
   `--text-muted` when unknown or signed out.
-- **Username** — 12px, `--accent-identity`.
+- **Identity** — the signed-in username (12px, `--accent-identity`), with the
+  role beneath it in 11px `--text-muted`. The footer is about who is signed
+  in; the role is secondary.
 - **Theme** — a nav row naming the current theme: moon + `Dark` or
   sun + `Light`. Replaces the pill switch.
 - **Sign out** — a nav row with a sign-out icon.
@@ -329,8 +348,8 @@ Collapsed (48px):
 - Icon-only rows keep their names as `aria-label` and `title`; the status dot
   keeps its readout in `title`.
 - The wordmark shrinks to its `>` prompt, which becomes the expand control.
-- The username row hides and moves into the sign-out tooltip
-  (`Sign out admin`).
+- The identity rows hide; the username moves into the sign-out tooltip
+  (`Sign out ccappuccio`).
 - The state persists in `localStorage` next to `theme`. Between 769 and
   1024px the sidebar starts collapsed unless the user has chosen otherwise.
 
@@ -543,14 +562,19 @@ on Users, `PASSWORD` on Account.
 |---|---|---|---|
 | Quiet | 32px, or small 28px | transparent, 1px `--border`, `--text-secondary`; hover `--surface-hover`, `--text` | `All`, `None`, `Common`, `enable`/`disable`, band toggles |
 | Primary | 32px | `--accent-network` fill, `--text-on-accent` | `Save`, `Sign in`, `Add user`, `Change password` |
-| Allocate | 32px | `--accent-alloc` fill, `--text-on-accent` | `Assign next`, `Add` |
-| Outlined accent | 28px | 1px accent border and label; hover fills with the accent, label `--text-on-accent` | `Assign` (alloc), `Subdivide` (subdivide) |
+| Allocate | 32px | `--accent-alloc` fill, `--text-on-accent` | the one default action per band: `Assign next`, `Add` |
+| Outlined accent | 28px | 1px accent border and label; hover adds a 12% accent fill | `Assign` (alloc), `Subdivide` (subdivide) |
 | Destructive | 28px | quiet at rest; hover `--danger-fill`, white label | `del`; filled only inside the confirm plate |
 | Icon | 28 × 28px | transparent, 16px icon in `--text-muted`; hover `--surface-hover`, `--text` | disclosure, previous/next, close, collapse, menu |
 | Segmented | 28px | 1px `--border` outline, `--radius-sm`, 8px per segment; selected segment `--surface-active` | `Hosts \| Networks`, mask sizes |
 | Row action | full row height, 64px | square, 1px `--border-subtle` left edge, 12px 500 label | `open`/`close`, `hosts`/`close`; settings (36px, icon) |
 
 Horizontal padding is 12px on 32px buttons and 8px on 28px ones.
+
+Green stays restrained: ordinary allocation choices — mask chips, `Assign` on
+each available prefix — are green text or border with at most a subtle fill.
+Only a band's preferred/default action (`Assign next`, `Add`) is solid green,
+so a screen full of valid choices never turns into a wall of green slabs.
 
 Row actions stay flush right, full height and colored — they are part of
 GoPieNg's identity — but narrower (64px, from 80px or more) and less
@@ -661,9 +685,10 @@ general rules gives GoPieNg character. Refine it; don't normalize it.
   `Esc or click anywhere to dismiss`, replaces the centered
   `(click anywhere to dismiss)` suffix.
 - **Delete confirmation** (`showConfirmModal`): the same plate with a compact
-  action row — `Cancel` (quiet, in plate colors), then `Delete`
-  (`--plate-danger`, white). `Cancel` takes focus on open, as today. `Esc` and
-  a scrim click cancel.
+  action row — `Cancel`, then `Delete`. `Cancel` is deliberately boring:
+  `--surface-raised`, `--text`, `--border-subtle` in either theme, with no
+  pink or red. `Delete` gets the red treatment (`--plate-danger`, white).
+  `Cancel` takes focus on open, as today. `Esc` and a scrim click cancel.
 - **Both:** `role="dialog"` with `aria-modal="true"` (`role="alertdialog"` for
   the confirmation), labelled by the heading and described by the body. Focus
   moves into the plate, `Tab` stays inside it, and focus returns to the
@@ -736,6 +761,9 @@ Today's horizontal-scroll rule targets `.tree`, but the tree container is
 
 ## 13. Migration
 
+The overhaul described here has been applied to `web/`. This section records
+what changed from `f8079fe`, for reviewers and for anyone reading older code.
+
 ### 13.1 Map
 
 | Today | Becomes |
@@ -782,7 +810,7 @@ Found while reviewing `f8079fe`; each goes away under the new primitives.
   forward.
 - The confirm overlay shows a pointer cursor but ignores clicks.
 - In the light theme the confirm `Cancel` renders plate pink on `--bg-3` gray
-  (1.2:1).
+  (1.2:1). It becomes a neutral button.
 - Owner and account columns shift left on rows with the settings control.
 - Inline-editable cells can't be reached by keyboard.
 
