@@ -327,8 +327,47 @@ function NetworkTree(){
 
   // Initial render
   renderTree()
+  watchAddressColumn(tree)
 
   return tree
+}
+
+// The address column is one fixed track shared by every row, so description,
+// owner and account stay aligned at any depth. It starts at --col-address
+// (248px) and grows, never shrinks, to fit the widest visible address cell
+// (indent + disclosure + full prefix); addresses are never truncated.
+function watchAddressColumn(tree){
+  const narrow = window.matchMedia('(max-width: 768px)')
+  let width = 0
+  let queued = false
+  const fit = () => {
+    queued = false
+    if (!tree.isConnected || narrow.matches) return
+    if (!width) width = parseFloat(getComputedStyle(tree).getPropertyValue('--col-address')) || 248
+    let need = 0
+    // Measure content (to the end of the prefix), not the cell, which is
+    // already as wide as the track
+    for (const cell of tree.querySelectorAll('.tree-address')) {
+      const cidr = cell.querySelector('.tree-cidr')
+      if (!cell.offsetParent || !cidr) continue
+      need = Math.max(need, cidr.getBoundingClientRect().right - cell.getBoundingClientRect().left)
+    }
+    // Keep the 8px slack that gives a 16px visual gap, on the 4px grid
+    const next = Math.ceil((need + 8) / 4) * 4
+    if (next > width) {
+      width = next
+      tree.style.setProperty('--col-address-tree', width + 'px')
+    }
+  }
+  const schedule = () => {
+    if (queued) return
+    queued = true
+    requestAnimationFrame(fit)
+  }
+  new MutationObserver(schedule).observe(tree, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
+  narrow.addEventListener('change', schedule)
+  if (document.fonts) document.fonts.ready.then(schedule)
+  schedule()
 }
 
 function TreeNode(net, depth){

@@ -356,7 +356,8 @@ Collapsed (48px):
 At ≤ 768px the sidebar becomes an overlay drawer (192px, `--shadow-float`)
 over a scrim, opened from a menu icon button at the left of the toolbar. It
 closes on Esc, a scrim click or navigation; focus moves into it on open and
-back to the menu button on close.
+back to the menu button on close. While it is open the workspace is `inert`,
+so keyboard focus can't reach anything behind the scrim.
 
 ### 4.2 Workspace toolbar
 
@@ -426,7 +427,7 @@ inside. No zebra striping; the host table's odd/even fills go.
 .tree-row {
   display: grid;
   grid-template-columns:
-    minmax(var(--col-address), max-content)  /* indent + disclosure + CIDR */
+    var(--col-address-tree, var(--col-address)) /* indent + disclosure + CIDR */
     minmax(0, 1fr)                           /* description */
     var(--col-owner) var(--col-account) var(--col-actions);
   align-items: center;
@@ -441,8 +442,13 @@ inside. No zebra striping; the host table's odd/even fills go.
 - JS sets only `--depth` on the row (`style="--depth: 2"`), replacing today's
   computed `padding-left: ${depth * 20 + 8}px`. CSS owns the geometry.
 - The address column absorbs the indentation, so description, owner and
-  account align down the whole tree. A row whose address doesn't fit widens
-  its own address cell: alignment yields, the address is never truncated.
+  account align down the whole tree.
+- The address track is one width for the whole tree, never per row. It
+  starts at `--col-address` (248px); when a visible row needs more — a long
+  IPv6 prefix, a deep node — the tree widens `--col-address-tree` for every
+  row at once. It grows and never shrinks while the tree is shown, so
+  expanding and collapsing doesn't make columns jump. Addresses are never
+  truncated.
 - The actions column is the same width on every row, and rows without a
   settings control leave that slot empty. (Today the ⚙ pushes owner and
   account left on administrators' container rows.)

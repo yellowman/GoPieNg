@@ -538,8 +538,10 @@ details.section > .band { border-top: 0; }
 
 .tree-row {
   display: grid;
+  /* One address width for the whole tree: set on .net-tree by
+     fitAddressColumn(), never less than --col-address */
   grid-template-columns:
-    minmax(var(--col-address), max-content)
+    var(--col-address-tree, var(--col-address))
     minmax(0, 1fr)
     var(--col-owner)
     var(--col-account)

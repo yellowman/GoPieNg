@@ -46,6 +46,7 @@ mountApp(root)
   const sidebar = document.getElementById('sidebar')
   const scrim = document.getElementById('drawerScrim')
   const menuBtn = document.getElementById('menuBtn')
+  const workspace = document.querySelector('.workspace')
 
   function stored(key){ try { return localStorage.getItem(key) } catch(e) { return null } }
   function storeKey(key, value){ try { localStorage.setItem(key, value) } catch(e) {} }
@@ -94,6 +95,8 @@ mountApp(root)
     shell.classList.toggle('drawer-open', open)
     scrim.hidden = !open
     menuBtn.setAttribute('aria-expanded', String(open))
+    // Overlay drawer: nothing behind the scrim is focusable while it is open
+    workspace.inert = open
     if (open) {
       sidebar.querySelector('.nav-row')?.focus()
     } else if (sidebar.contains(document.activeElement)) {
