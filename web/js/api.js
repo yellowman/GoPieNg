@@ -1,5 +1,5 @@
 // web/ui/assets/api.js
-import { parseChangeIDs } from './refresh.js'
+import { parseChangeIDs } from './refresh.js?v=17'
 export const API = '/api/pieng'
 
 export const auth = {

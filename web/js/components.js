@@ -1,8 +1,8 @@
-import { compareAddresses } from './refresh.js'
-import { api, auth } from './api.js'
-import { store } from './store.js'
-import { el, pushToast, showWarningModal, showConfirmModal, scrollBehavior } from './util.js'
-import { icon } from './icons.js'
+import { compareAddresses } from './refresh.js?v=17'
+import { api, auth } from './api.js?v=17'
+import { store } from './store.js?v=17'
+import { el, pushToast, showWarningModal, showConfirmModal, scrollBehavior } from './util.js?v=17'
+import { icon } from './icons.js?v=17'
 
 // Track expanded nodes
 const expanded = new Set()

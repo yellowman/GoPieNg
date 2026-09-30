@@ -88,11 +88,13 @@ loads an optional external tree into memory before privilege drop (32 MiB cap;
 no symlinks). `-no-static` still permits a separate web server to serve assets.
 An explicit webroot is a startup snapshot; restart to pick up changes. Rebuild
 and redeploy the binary to update its embedded assets. Separately hosted assets
-must be upgraded with the backend. Only the entry assets carry a version
-(`?v=16`); inner ES modules are imported unversioned, so a web server hosting
-`web/` must serve `/js/` and `/css/` with `Cache-Control: no-cache` (revalidate
-on every load), as the built-in server does. Long `expires` on `/js/` can run a
-new `app.js` against stale modules from the previous release.
+must be upgraded with the backend. The whole module graph carries one asset
+version (`?v=17` on `styles.css`, `app.js` and every internal import;
+`web/js/version.test.mjs` enforces it), bumped with every frontend release so
+an upgrade loads entirely new URLs even where an older configuration cached
+`/js/` for an hour. A web server hosting `web/` should still serve `/js/` and
+`/css/` with `Cache-Control: no-cache` (revalidate on every load), as the
+built-in server does.
 
 Chroot and supplementary-group-drop failures are now fatal, as are pledge
 failures on OpenBSD. Ensure the jail exists before starting as root. For a

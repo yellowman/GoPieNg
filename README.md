@@ -88,9 +88,8 @@ server {
     
     root /var/www/pieng/web;
     
-    # Static files served by nginx. Inner ES modules are imported without a
-    # version, so browsers must revalidate them on every load; a long cache
-    # could run a new app.js against stale modules after an upgrade.
+    # Static files served by nginx. Every release versions the whole module
+    # graph (?v=N); revalidating as well keeps any stale copy from running.
     location /css/ {
         add_header Cache-Control "no-cache";
     }
@@ -139,10 +138,10 @@ server "ipam.example.com" {
 }
 ```
 
-OpenBSD `httpd(8)` cannot set `Cache-Control`, so browsers may briefly reuse
-cached modules after an upgrade (inner ES modules are imported unversioned).
-Either let GoPieNg serve the assets itself (the default; it sends `no-cache`)
-or have users reload after deploying a new release.
+OpenBSD `httpd(8)` cannot set `Cache-Control`. Each release versions the entry
+assets and every module import (`?v=N`), so a new release still loads fresh
+modules; GoPieNg serving the assets itself (the default) also sends
+`no-cache`.
 
 ## Security
 

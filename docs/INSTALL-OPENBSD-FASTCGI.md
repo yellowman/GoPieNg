@@ -148,8 +148,8 @@ server {
     location / {
         alias /var/www/pieng/web/;
         try_files $uri $uri/ /index.html;
-        # Inner ES modules are imported unversioned: make browsers revalidate
-        # so a new app.js never runs against stale modules after an upgrade.
+        # Releases version the whole module graph (?v=N); revalidating as
+        # well keeps a stale copy from ever running after an upgrade.
         add_header Cache-Control "no-cache";
     }
 
