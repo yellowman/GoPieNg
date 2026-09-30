@@ -1,9 +1,39 @@
 // A change is acknowledged only after its snapshot has been applied. Skipping
 // a refresh during editing/search must not silently consume that change.
+//
+// Changes this client made itself are already reflected in the UI. Their
+// changelog IDs come back with each mutation (X-Pieng-Change) and are
+// acknowledged only as a contiguous run directly after the applied marker, so
+// a concurrent change by another operator (an ID in between) always forces a
+// refresh. Gaps from rolled-back transactions only cost an extra refresh.
 export class ChangeTracker {
-  constructor() { this.applied = null }
-  needsRefresh(version) { return Number.isSafeInteger(version) && version >= 0 && version !== this.applied }
-  acknowledge(version) { if (Number.isSafeInteger(version) && version >= 0) this.applied = version }
+  constructor() { this.applied = null; this.own = new Set() }
+  needsRefresh(version) {
+    this.absorbOwn()
+    return Number.isSafeInteger(version) && version >= 0 && version !== this.applied
+  }
+  acknowledge(version) {
+    if (!Number.isSafeInteger(version) || version < 0) return
+    this.applied = version
+    this.absorbOwn()
+  }
+  recordOwn(ids) {
+    for (const id of ids) if (Number.isSafeInteger(id) && id > 0) this.own.add(id)
+    this.absorbOwn()
+  }
+  absorbOwn() {
+    if (this.applied === null) return
+    while (this.own.has(this.applied + 1)) {
+      this.applied += 1
+      this.own.delete(this.applied)
+    }
+    for (const id of this.own) if (id <= this.applied) this.own.delete(id)
+  }
+}
+
+// Parse the X-Pieng-Change header ("12" or "12,13") into changelog IDs.
+export function parseChangeIDs(header) {
+  return String(header || '').split(',').map(s => Number(s.trim())).filter(n => Number.isSafeInteger(n) && n > 0)
 }
 
 export function withoutDescendants(networks, parentId) {
