@@ -311,15 +311,22 @@ The default API base path is `/api/pieng`.
 
 ## UI Usage
 
+The interface follows [DESIGN_LANGUAGE.md](DESIGN_LANGUAGE.md): navigation in
+the left sidebar (collapsible; a drawer on phones), search in the toolbar above
+the network tree.
+
 ### Network Tree
-- Click the arrow to expand a network and see children
-- Click open/close button to toggle expansion
-- Click description text to edit inline
-- Click owner field to edit inline
+- Click the chevron, or the yellow `open` / blue `hosts` control, to expand a network
+- Click (or focus and press Enter on) a description, owner or account to edit it inline
 - Press Enter to save, Escape to cancel
 
+### Searching
+- Type in the toolbar search and pick `Hosts` or `Networks`
+- Enter or ↓ jumps to the next match, Shift+Enter or ↑ to the previous one
+- Escape clears the search
+
 ### Configuring Allocation Sizes (Administrator)
-- Click the gear icon on any subdividable network
+- Click the sliders icon on any subdividable network
 - Check which sizes should be allowed
 - Use "Common" to select /+1 through /+4
 - Click Save
@@ -327,23 +334,25 @@ The default API base path is `/api/pieng`.
 ### Allocating Subnets
 - Expand a subdivide network
 - Enter description (optional)
-- Click a size button:
-  - Green buttons = recommended (larger blocks)
-  - Gray buttons = smaller blocks (use sparingly)
+- Pick a size: green labels are recommended (larger blocks), gray ones are
+  smaller blocks (use sparingly)
+- Click `Assign next`, or open `Available` to choose a specific prefix and
+  `Assign` it (leaf) or `Subdivide` it
 
 ### Managing Hosts
-- Click "hosts" on a leaf network
+- Click `hosts` on a leaf network
 - Enter IP (or leave blank for auto) and description
 - Click Add
+- `All addresses` lists every address in the network for bulk editing
 - Click description to edit
 - Click del to delete
 
-### User Management (Administrator)
-- Go to Users tab (visible only to administrators)
-- Add new users with username/password/role
-- Change user roles via dropdown (administrator/creator/editor/reader)
-- Enable/disable users
-- Delete users
+### Users and Account
+- Administrators see `Users`: add users with username/password/role, change
+  roles via dropdown (administrator/creator/editor/reader), enable/disable or
+  delete users, and change their own password under `Your password`
+- Everyone else sees `Account`, where they can change their password
+- Recent changes are listed under `Activity`
 
 ## Development
 

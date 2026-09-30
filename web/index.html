@@ -7,38 +7,54 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=10"/>
-  <script type="module" src="js/app.js?v=10"></script>
+  <link rel="stylesheet" href="css/styles.css?v=11"/>
+  <script type="module" src="js/app.js?v=11"></script>
 </head>
-<body class="not-authed">
-  <div id="networkBanner" class="network-banner hidden">Server not responding - network may be unavailable</div>
-  <div class="app">
-    <header class="app-header">
-      <div class="logo">&gt; ipam</div>
-      <nav>
-        <a href="#" class="active" data-page="browse">Browse</a>
-        <a href="#" data-page="logs">Logs</a>
-        <a href="#" data-page="users" id="usersNavLink">User</a>
+<body class="not-authed" data-page="browse">
+  <div id="networkBanner" class="network-banner hidden" role="alert">Server not responding - network may be unavailable</div>
+  <div class="shell" id="shell">
+    <aside class="sidebar" id="sidebar" aria-label="Sidebar">
+      <div class="sidebar-brand">
+        <button type="button" class="brand" id="brandBtn" aria-label="Browse networks"><span class="brand-prompt">&gt;</span><span class="brand-word nav-label"> ipam</span></button>
+        <button type="button" class="icon-btn sidebar-collapse" id="sidebarCollapse" aria-label="Collapse sidebar" title="Collapse sidebar"><span data-icon="chevron-left"></span></button>
+      </div>
+      <nav class="sidebar-nav" aria-label="Primary">
+        <a href="#browse" class="nav-row" data-page="browse" aria-label="Browse" title="Browse"><span data-icon="browse"></span><span class="nav-label">Browse</span></a>
+        <a href="#logs" class="nav-row" data-page="logs" aria-label="Activity" title="Activity"><span data-icon="activity"></span><span class="nav-label">Activity</span></a>
+        <a href="#users" class="nav-row" data-page="users" id="usersNavLink" aria-label="Account" title="Account"><span data-icon="user" id="usersNavIcon"></span><span class="nav-label" id="usersNavLabel">Account</span></a>
       </nav>
-      <div class="header-search" id="headerSearch">
-        <input type="text" id="searchInput" placeholder="search hosts" class="search-input" />
-        <span id="searchInfo" class="search-info"></span>
-        <button id="searchPrev" class="search-nav" title="Previous (Shift+Enter)">▲</button>
-        <button id="searchNext" class="search-nav" title="Next (Enter)">▼</button>
-        <div id="searchToggle" class="search-toggle" title="Toggle hosts/networks">
-          <div class="toggle-track">
-            <div class="toggle-thumb"></div>
+      <div class="sidebar-footer">
+        <div class="sidebar-status" id="apiStatus" title="server —"><span class="status-dot"></span><span class="nav-label mono" id="apiStatusText">server —</span></div>
+        <div class="sidebar-identity nav-label">
+          <span id="userBadge" class="identity-name"></span>
+          <span id="userRole" class="identity-role"></span>
+        </div>
+        <button type="button" class="nav-row" id="themeToggle" aria-label="Switch to light theme" title="Switch to light theme"><span class="theme-icon" id="themeIcon"></span><span class="nav-label" id="themeLabel">Dark</span></button>
+        <button type="button" class="nav-row" id="logoutBtn" aria-label="Sign out" title="Sign out"><span data-icon="sign-out"></span><span class="nav-label">Sign out</span></button>
+      </div>
+    </aside>
+    <div class="scrim" id="drawerScrim" hidden></div>
+    <div class="workspace">
+      <header class="toolbar">
+        <div class="toolbar-inner">
+          <button type="button" class="icon-btn menu-btn" id="menuBtn" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar"><span data-icon="menu"></span></button>
+          <h1 class="toolbar-title" id="pageTitle">Networks</h1>
+          <div class="search-cluster" id="headerSearch" role="search">
+            <input type="text" id="searchInput" placeholder="search hosts…" class="search-input mono" aria-label="Search hosts" autocomplete="off" spellcheck="false"/>
+            <div class="segmented search-mode" role="group" aria-label="Search mode">
+              <button type="button" id="modeHosts" data-mode="hosts" aria-pressed="true">Hosts</button>
+              <button type="button" id="modeNetworks" data-mode="networks" aria-pressed="false">Networks</button>
+            </div>
+            <span id="searchInfo" class="search-info mono" aria-live="polite"></span>
+            <div class="btn-group search-nav">
+              <button type="button" id="searchPrev" class="icon-btn" aria-label="Previous match" title="Previous match (↑ or Shift+Enter)"><span data-icon="chevron-up"></span></button>
+              <button type="button" id="searchNext" class="icon-btn" aria-label="Next match" title="Next match (↓ or Enter)"><span data-icon="chevron-down"></span></button>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="header-right">
-        <div class="status" id="apiStatus"><span class="status-dot"></span><span id="apiStatusText">…</span></div>
-        <span id="userBadge" class="user-badge">not signed in</span>
-        <button id="logoutBtn" class="logout-btn" title="Sign out">logout</button>
-        <button class="theme-toggle" id="themeToggle" title="Toggle theme"></button>
-      </div>
-    </header>
-    <main id="app" class="page active"></main>
+      </header>
+      <main id="app" class="surface"></main>
+    </div>
   </div>
   <div id="toastRoot" class="toast-root"></div>
 </body>
