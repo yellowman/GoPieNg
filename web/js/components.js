@@ -41,6 +41,9 @@ export function mountApp(root){
 // Flag to explicitly reset scroll (for navigation)
 let resetScrollOnRender = false
 
+// Teardown for the rendered tree's watchers; run before a render replaces it
+let disposeTree = null
+
 function render(root){
   const savedScroll = resetScrollOnRender ? 0 : window.scrollY
   resetScrollOnRender = false
@@ -52,6 +55,7 @@ function render(root){
   }
 
   try {
+    if (disposeTree) { disposeTree(); disposeTree = null }
     root.innerHTML = ''
     const st = store
     if (!st.user) {
@@ -327,7 +331,7 @@ function NetworkTree(){
 
   // Initial render
   renderTree()
-  watchAddressColumn(tree)
+  disposeTree = watchAddressColumn(tree)
 
   return tree
 }
@@ -336,6 +340,7 @@ function NetworkTree(){
 // owner and account stay aligned at any depth. It starts at --col-address
 // (248px) and grows, never shrinks, to fit the widest visible address cell
 // (indent + disclosure + full prefix); addresses are never truncated.
+// Returns a cleanup that stops watching.
 function watchAddressColumn(tree){
   const narrow = window.matchMedia('(max-width: 768px)')
   let width = 0
@@ -364,10 +369,16 @@ function watchAddressColumn(tree){
     queued = true
     requestAnimationFrame(fit)
   }
-  new MutationObserver(schedule).observe(tree, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
+  const observer = new MutationObserver(schedule)
+  observer.observe(tree, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
   narrow.addEventListener('change', schedule)
   if (document.fonts) document.fonts.ready.then(schedule)
   schedule()
+
+  return () => {
+    observer.disconnect()
+    narrow.removeEventListener('change', schedule)
+  }
 }
 
 function TreeNode(net, depth){
