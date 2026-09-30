@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=11"/>
-  <script type="module" src="js/app.js?v=11"></script>
+  <link rel="stylesheet" href="css/styles.css?v=16"/>
+  <script type="module" src="js/app.js?v=16"></script>
 </head>
 <body class="not-authed" data-page="browse">
   <div id="networkBanner" class="network-banner hidden" role="alert">Server not responding - network may be unavailable</div>
@@ -39,6 +39,7 @@
         <div class="toolbar-inner">
           <button type="button" class="icon-btn menu-btn" id="menuBtn" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar"><span data-icon="menu"></span></button>
           <h1 class="toolbar-title" id="pageTitle">Networks</h1>
+          <button type="button" class="btn-sm btn-toggle toolbar-add" id="addNetworkBtn" aria-expanded="false"><span data-icon="plus"></span>Add network</button>
           <div class="search-cluster" id="headerSearch" role="search">
             <input type="text" id="searchInput" placeholder="search hosts…" class="search-input mono" aria-label="Search hosts" autocomplete="off" spellcheck="false"/>
             <div class="segmented search-mode" role="group" aria-label="Search mode">

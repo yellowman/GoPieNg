@@ -445,6 +445,12 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
   margin-left: auto;
 }
 body:not([data-page="browse"]) .search-cluster { display: none; }
+.toolbar-add { display: none; }
+body.is-admin[data-page="browse"] .toolbar-add { display: inline-flex; }
+.add-cidr { width: 200px; }
+.add-network { margin-bottom: var(--space-4); border: 0; }
+.reset-row > td { padding: 0; }
+.reset-row .band { border-bottom: 0; }
 
 .search-input {
   width: 240px;
@@ -545,7 +551,7 @@ details.section > .band { border-top: 0; }
     minmax(0, 1fr)
     var(--col-owner)
     var(--col-account)
-    calc(var(--col-settings) + var(--col-primary));
+    max-content; /* actions: the same slots on every row for a given user */
   align-items: center;
   column-gap: var(--space-2);
   min-height: var(--row-h);
@@ -612,6 +618,8 @@ details.section > .band { border-top: 0; }
 .row-action.open { background: var(--fill-subdivide); color: var(--accent-subdivide); }
 .row-action.open:hover,
 .row-action.open[aria-expanded="true"] { background: var(--fill-subdivide-strong); color: var(--accent-subdivide); }
+.row-action.remove { width: var(--col-settings); background: transparent; color: var(--text-muted); }
+.row-action.remove:hover { background: var(--danger-fill); color: #fff; }
 .row-action.hosts { background: var(--fill-host); color: var(--accent-host); }
 .row-action.hosts:hover,
 .row-action.hosts[aria-expanded="true"] { background: var(--fill-host-strong); color: var(--accent-host); }
@@ -631,6 +639,17 @@ details.section > .band { border-top: 0; }
 .search-match-host {
   background: var(--wash-match) !important;
   box-shadow: inset 0 0 0 2px var(--accent-alloc);
+}
+
+/* CIDR resize (administrators) */
+.cidr-text.editable { cursor: pointer; border-radius: var(--radius-sm); padding: var(--space-1); margin: calc(-1 * var(--space-1)); }
+.cidr-text.editable:hover { background: var(--surface-active); }
+.cidr-edit {
+  height: var(--control-h-sm) !important;
+  border-radius: var(--radius-sm) !important;
+  font-size: var(--font-md) !important;
+  font-weight: 600;
+  color: var(--accent-network) !important;
 }
 
 /* Inline editing */
@@ -720,6 +739,7 @@ details.section > .band { border-top: 0; }
   cursor: pointer;
 }
 .mask-option:hover { background: var(--surface-hover); }
+.subdivide-option { width: fit-content; margin-bottom: var(--space-2); font-size: var(--font-md); }
 .mask-label { font-family: var(--mono); font-weight: 600; color: var(--accent-network); }
 .mask-size { font-family: var(--mono); color: var(--text-muted); }
 

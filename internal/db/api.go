@@ -233,6 +233,8 @@ func API(db *sql.DB, jwt *auth.Manager) http.Handler {
 		writeJSON(w, out)
 	})
 
+	r.Post("/networks", m.createNetwork)
+
 	r.Get("/networks/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id, err := pathID(r)
 		if err != nil {
