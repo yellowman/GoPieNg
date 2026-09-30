@@ -38,6 +38,15 @@ type Change struct {
 }
 
 // Helper to write JSON response with proper Content-Type
+// nullableID serializes a SQL NULL id as JSON null rather than 0, so a root
+// network is never mistaken for a child of network 0.
+func nullableID(id sql.NullInt64) any {
+	if !id.Valid {
+		return nil
+	}
+	return id.Int64
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
@@ -221,7 +230,7 @@ func API(db *sql.DB, jwt *auth.Manager) http.Handler {
 				n.ValidMasks = ipam.ParseSmallIntArray(vm.String)
 			}
 			out = append(out, map[string]any{
-				"id": n.ID, "parent": n.Parent.Int64, "address_range": n.AddressRange,
+				"id": n.ID, "parent": nullableID(n.Parent), "address_range": n.AddressRange,
 				"description": n.Description.String, "subdivide": n.Subdivide, "valid_masks": n.ValidMasks,
 				"owner": n.Owner.String, "account": n.Account.String, "service": n.Service.Int64,
 			})
@@ -252,7 +261,7 @@ func API(db *sql.DB, jwt *auth.Manager) http.Handler {
 			n.ValidMasks = ipam.ParseSmallIntArray(vm.String)
 		}
 		writeJSON(w, map[string]any{"network": map[string]any{
-			"id": n.ID, "parent": n.Parent.Int64, "address_range": n.AddressRange,
+			"id": n.ID, "parent": nullableID(n.Parent), "address_range": n.AddressRange,
 			"description": n.Description.String, "subdivide": n.Subdivide, "valid_masks": n.ValidMasks,
 			"owner": n.Owner.String, "account": n.Account.String, "service": n.Service.Int64,
 		}})

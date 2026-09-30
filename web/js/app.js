@@ -1,8 +1,8 @@
-import { ChangeTracker, compareAddresses } from './refresh.js'
-import { api, auth } from './api.js'
-import { store } from './store.js'
-import { mountApp, setResetScroll } from './components.js'
-import { icon, hydrateIcons } from './icons.js'
+import { ChangeTracker, compareAddresses } from './refresh.js?v=17'
+import { api, auth } from './api.js?v=17'
+import { store } from './store.js?v=17'
+import { mountApp, setResetScroll } from './components.js?v=17'
+import { icon, hydrateIcons } from './icons.js?v=17'
 
 const root = document.getElementById('app')
 
@@ -18,17 +18,45 @@ function updateAuthClass() {
 // Listen for store changes to update auth class
 store.on(updateAuthClass)
 
-// Resume session
-const token = auth.token()
-if (token) {
+// Resume session. Only a 401 ends it: a PostgreSQL restart, a 5xx or a
+// network interruption keeps the token and retries, showing "Reconnecting"
+// instead of the sign-in form.
+async function restoreSession() {
+  while (auth.token()) {
+    try {
+      const me = await api.me()
+      const list = await api.networks()
+      store.set({ user: me, networks: Array.isArray(list) ? list : [], browseParent: null, restoring: null })
+      return
+    } catch(e) {
+      if (e.status === 401) {
+        auth.setToken('')
+        store.set({ user: null, restoring: null })
+        return
+      }
+      store.set({ restoring: 'retrying' })
+      await new Promise(resolve => setTimeout(resolve, 3000))
+    }
+  }
+  store.set({ restoring: null })
+}
+
+if (auth.token()) {
+  store.restoring = 'loading'
+  // The first attempt completes before the shell mounts, as before, so a
+  // healthy start never flashes an intermediate state.
   try {
     const me = await api.me()
     const list = await api.networks()
-    store.set({ user: me, networks: Array.isArray(list) ? list : [], browseParent: null })
+    store.set({ user: me, networks: Array.isArray(list) ? list : [], browseParent: null, restoring: null })
   } catch(e) {
-    // Invalid token - clear it
-    auth.setToken('')
-    store.set({ user: null })
+    if (e.status === 401) {
+      auth.setToken('')
+      store.set({ user: null, restoring: null })
+    } else {
+      store.restoring = 'retrying'
+      setTimeout(restoreSession, 3000)
+    }
   }
 }
 
@@ -136,7 +164,7 @@ mountApp(root)
     suppressRefreshUntil = Date.now() + 1000
   }
   window.addEventListener('pieng:unauthorized', () => {
-    store.set({ user: null, networks: [] })
+    store.set({ user: null, networks: [], restoring: null })
   })
 
   async function checkNetwork() {

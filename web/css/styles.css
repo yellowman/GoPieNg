@@ -715,6 +715,7 @@ details.section > .band { border-top: 0; }
   border-bottom: 1px solid var(--border-subtle);
 }
 .avail-row:last-child { border-bottom: 0; }
+.avail-more { padding: var(--space-2) 0 var(--space-1); }
 .avail-cidr {
   flex: 1;
   font-family: var(--mono);

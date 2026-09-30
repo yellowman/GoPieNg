@@ -967,8 +967,16 @@ func affected(result sql.Result) error {
 	return nil
 }
 
-// availableSubnets validates policy before invoking bounded enumeration. A
-// refused oversized listing is an error, never a misleading empty pool.
+// Pagination headers for the available-subnet listing.
+const (
+	TotalHeader = "X-Pieng-Total" // free blocks in the whole pool
+	NextHeader  = "X-Pieng-Next"  // cursor (the page's last block) when more follow
+)
+
+// availableSubnets validates policy, then lists free blocks one page at a
+// time (?limit=, default 256, max 1024; ?after= the previous page's last
+// block). The pool is walked lazily, so a /8 split into /24s or an IPv6 /32
+// into /64s never materializes more than one page on the server or client.
 func (m mutations) availableSubnets(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {
@@ -1002,10 +1010,15 @@ func (m mutations) availableSubnets(w http.ResponseWriter, r *http.Request) {
 		respondError(w, err)
 		return
 	}
-	if mask-n.prefix.Bits() > 16 {
-		respondError(w, problem(422, "too many subnets to display; use a narrower parent or automatic allocation"))
-		return
+	limit := 256
+	if text := r.URL.Query().Get("limit"); text != "" {
+		limit, err = strconv.Atoi(text)
+		if err != nil || limit < 1 || limit > 1024 {
+			respondError(w, problem(400, "invalid limit"))
+			return
+		}
 	}
+	after := r.URL.Query().Get("after")
 	rows, err := m.db.QueryContext(r.Context(), `SELECT address_range::text FROM networks WHERE parent=$1`, id)
 	if err != nil {
 		respondError(w, err)
@@ -1025,9 +1038,18 @@ func (m mutations) availableSubnets(w http.ResponseWriter, r *http.Request) {
 		respondError(w, err)
 		return
 	}
-	out := []map[string]any{}
-	for _, cidr := range ipam.AvailableSubnetsStr(cidr, children, mask) {
-		out = append(out, map[string]any{"address_range": cidr, "mask": mask})
+	page, more, total, err := ipam.FreeSubnetsPage(cidr, children, mask, after, limit)
+	if err != nil {
+		respondError(w, problem(400, err.Error()))
+		return
+	}
+	out := make([]map[string]any, 0, len(page))
+	for _, block := range page {
+		out = append(out, map[string]any{"address_range": block, "mask": mask})
+	}
+	w.Header().Set(TotalHeader, total.String())
+	if more {
+		w.Header().Set(NextHeader, page[len(page)-1])
 	}
 	writeJSON(w, out)
 }

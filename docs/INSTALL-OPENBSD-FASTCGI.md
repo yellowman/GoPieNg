@@ -150,6 +150,13 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # Releases version the whole module graph (?v=N), so /js/ and /css/ need
+    # no cache headers. index.html carries that version and must revalidate.
+    location = /index.html {
+        alias /var/www/pieng/web/index.html;
+        add_header Cache-Control "no-cache";
+    }
+
     location /api/pieng {
         fastcgi_pass unix:/var/www/run/gopieng.sock;
         include fastcgi_params;

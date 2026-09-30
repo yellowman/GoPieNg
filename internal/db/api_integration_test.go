@@ -180,7 +180,11 @@ func TestAPIPointToPointAndIPv6(t *testing.T) {
 		t.Fatal("IPv6 audit prefix must be /128")
 	}
 	f.do(t, "POST", "/networks/23/allocate-subnet", f.creator, `{"mask":64}`, 200)
-	f.do(t, "GET", "/networks/23/available-subnets?mask=64", f.creator, "", 422)
+	// A /32 split into /64s is listed one page at a time, never materialized.
+	w := f.do(t, "GET", "/networks/23/available-subnets?mask=64", f.creator, "", 200)
+	if w.Header().Get("X-Pieng-Total") != "4294967295" || w.Header().Get("X-Pieng-Next") == "" {
+		t.Fatalf("IPv6 page headers: total=%q next=%q", w.Header().Get("X-Pieng-Total"), w.Header().Get("X-Pieng-Next"))
+	}
 }
 
 func TestAPIAllocationPolicy(t *testing.T) {
@@ -478,4 +482,83 @@ func TestAPIMutationReportsItsChangeIDs(t *testing.T) {
 	if got := f.do(t, "PATCH", "/networks/2", f.editor, `{"valid_masks":[25]}`, 403).Header().Get("X-Pieng-Change"); got != "" {
 		t.Fatalf("failed mutation reported change %q", got)
 	}
+}
+
+// Roots must serialize parent as JSON null, not 0: the UI decides whether a
+// row is a child allocation (removable by creators) from this field.
+func TestAPIRootParentIsNull(t *testing.T) {
+	f := newFixture(t)
+	var list []map[string]any
+	if err := json.Unmarshal(f.do(t, "GET", "/networks", f.reader, "", 200).Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	parents := map[float64]any{}
+	for _, n := range list {
+		parents[n["id"].(float64)] = n["parent"]
+	}
+	if p, ok := parents[1]; !ok || p != nil {
+		t.Fatalf("root parent = %#v, want null", p)
+	}
+	var children []map[string]any
+	if err := json.Unmarshal(f.do(t, "GET", "/networks?parent_id=1", f.reader, "", 200).Body.Bytes(), &children); err != nil {
+		t.Fatal(err)
+	}
+	if len(children) == 0 || children[0]["parent"] != float64(1) {
+		t.Fatalf("child parent = %#v, want 1", children)
+	}
+	var one struct {
+		Network map[string]any `json:"network"`
+	}
+	if err := json.Unmarshal(f.do(t, "GET", "/networks/1", f.reader, "", 200).Body.Bytes(), &one); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := one.Network["parent"]; !ok || p != nil {
+		t.Fatalf("GET /networks/1 parent = %#v, want null", p)
+	}
+}
+
+func TestAPIAvailableSubnetsPaginate(t *testing.T) {
+	f := newFixture(t)
+	// 10.0.0.0/16 holds 10.0.0.0/24 and 10.0.1.0/24: 254 free /24s remain.
+	type block struct {
+		AddressRange string `json:"address_range"`
+	}
+	seen := map[string]bool{}
+	after := ""
+	for pages := 0; ; pages++ {
+		path := "/networks/1/available-subnets?mask=24&limit=100"
+		if after != "" {
+			path += "&after=" + url.QueryEscape(after)
+		}
+		w := f.do(t, "GET", path, f.creator, "", 200)
+		if w.Header().Get("X-Pieng-Total") != "254" {
+			t.Fatalf("total %q, want 254", w.Header().Get("X-Pieng-Total"))
+		}
+		var page []block
+		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+			t.Fatal(err)
+		}
+		if len(page) > 100 {
+			t.Fatalf("page of %d exceeds limit", len(page))
+		}
+		for _, b := range page {
+			if seen[b.AddressRange] || b.AddressRange == "10.0.0.0/24" || b.AddressRange == "10.0.1.0/24" {
+				t.Fatalf("duplicate or allocated block %s", b.AddressRange)
+			}
+			seen[b.AddressRange] = true
+		}
+		after = w.Header().Get("X-Pieng-Next")
+		if after == "" {
+			break
+		}
+		if pages > 5 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if len(seen) != 254 {
+		t.Fatalf("listed %d blocks, want 254", len(seen))
+	}
+	f.do(t, "GET", "/networks/1/available-subnets?mask=24&limit=0", f.creator, "", 400)
+	f.do(t, "GET", "/networks/1/available-subnets?mask=24&limit=5000", f.creator, "", 400)
+	f.do(t, "GET", "/networks/1/available-subnets?mask=24&after=192.168.0.0/24", f.creator, "", 400)
 }

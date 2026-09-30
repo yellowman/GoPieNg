@@ -1,7 +1,9 @@
 package ipam
 
 import (
+	"fmt"
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -128,6 +130,61 @@ func TestAvailableMatchesBruteForce(t *testing.T) {
 			if actual[i] != want[i] {
 				t.Fatalf("%v vs %v", actual, want)
 			}
+		}
+	}
+}
+
+func TestFreeSubnetsPageMatchesFullListing(t *testing.T) {
+	_, parent, _ := net.ParseCIDR("10.0.0.0/24")
+	for n := 0; n < 16; n++ {
+		children := []string{SplitInto(parent, 28)[n].String(), "10.0.0.0/26", "10.0.0.32/27", "10.0.0.36/30"}
+		want := AvailableSubnetsStr(parent.String(), children, 28)
+		got := []string{}
+		after := ""
+		for {
+			page, more, total, err := FreeSubnetsPage(parent.String(), children, 28, after, 3)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if total.Int64() != int64(len(want)) {
+				t.Fatalf("total %s, want %d", total, len(want))
+			}
+			got = append(got, page...)
+			if !more {
+				break
+			}
+			after = page[len(page)-1]
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("paged %v\nwant  %v", got, want)
+		}
+	}
+}
+
+func TestFreeSubnetsPageLargePoolsAreLazy(t *testing.T) {
+	for _, tc := range []struct {
+		parent, first, total string
+		mask                 int
+	}{
+		{"10.0.0.0/8", "10.0.0.1/32", "16777215", 32},
+		{"2001:db8::/32", "2001:db8:0:1::/64", "4294967295", 64},
+	} {
+		children := []string{strings.Split(tc.parent, "/")[0] + "/" + fmt.Sprint(tc.mask)}
+		page, more, total, err := FreeSubnetsPage(tc.parent, children, tc.mask, "", 256)
+		if err != nil || len(page) != 256 || !more || page[0] != tc.first || total.String() != tc.total {
+			t.Fatalf("%s -> /%d: len=%d more=%v first=%v total=%v err=%v", tc.parent, tc.mask, len(page), more, page[0], total, err)
+		}
+	}
+}
+
+func TestFreeSubnetsPageRejectsBadInput(t *testing.T) {
+	for _, tc := range []struct {
+		mask  int
+		after string
+		limit int
+	}{{23, "", 10}, {33, "", 10}, {28, "", 0}, {28, "10.0.1.0/28", 10}, {28, "10.0.0.0/27", 10}, {28, "junk", 10}} {
+		if _, _, _, err := FreeSubnetsPage("10.0.0.0/24", nil, tc.mask, tc.after, tc.limit); err == nil {
+			t.Fatalf("accepted mask=%d after=%q limit=%d", tc.mask, tc.after, tc.limit)
 		}
 	}
 }
