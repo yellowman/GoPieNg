@@ -137,7 +137,8 @@ html, body {
   min-height: 100vh;
 }
 
-body:has(.network-banner:not(.hidden)) { --banner-h: 44px; }
+/* Set by checkNetwork() while the offline banner shows */
+body.network-down { --banner-h: 44px; }
 
 a { color: var(--accent-network); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -806,11 +807,20 @@ td > button, td > select { vertical-align: middle; }
    SIGN IN
    ============================================ */
 
+/* Signed out there is no sidebar or toolbar: center the sign-in column in
+   the whole window, not inside the left-anchored 1600px work surface */
+.not-authed .surface {
+  max-width: none;
+  min-height: calc(100dvh - var(--banner-h));
+  padding: var(--space-4);
+  display: grid;
+  place-items: center;
+}
 .login {
   width: 320px;
   max-width: 100%;
-  margin: 0 auto;
-  padding-top: 28vh;
+  margin: 0;
+  padding: 0;
 }
 .login-title {
   margin: 0;

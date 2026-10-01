@@ -1,8 +1,8 @@
-import { ChangeTracker, compareAddresses } from './refresh.js?v=17'
-import { api, auth } from './api.js?v=17'
-import { store } from './store.js?v=17'
-import { mountApp, setResetScroll } from './components.js?v=17'
-import { icon, hydrateIcons } from './icons.js?v=17'
+import { ChangeTracker, compareAddresses } from './refresh.js?v=18'
+import { api, auth } from './api.js?v=18'
+import { store } from './store.js?v=18'
+import { mountApp, setResetScroll } from './components.js?v=18'
+import { icon, hydrateIcons } from './icons.js?v=18'
 
 const root = document.getElementById('app')
 
@@ -62,6 +62,12 @@ if (auth.token()) {
 
 // Initial auth class update
 updateAuthClass()
+
+// Route and history are set before the first render, so the page (and the
+// sign-in form in particular) is built once rather than rebuilt right away.
+const initialPage = location.hash.replace('#', '') || 'browse'
+history.replaceState({ page: initialPage }, '', `#${initialPage}`)
+store.currentPage = initialPage
 
 mountApp(root)
 
@@ -184,6 +190,7 @@ mountApp(root)
         if (!networkOk) {
           networkOk = true
           if (banner) banner.classList.add('hidden')
+          document.body.classList.remove('network-down')
           updateStatus()
         }
         
@@ -217,6 +224,7 @@ mountApp(root)
       if (networkOk) {
         networkOk = false
         if (banner) banner.classList.remove('hidden')
+        document.body.classList.add('network-down')
       }
       // The sidebar agrees with the banner
       setServerState('error', 'server down')
@@ -282,7 +290,7 @@ mountApp(root)
   let lastUser
 
   // Reflect identity, role and page in the shell when the store changes
-  store.on(() => {
+  function syncShell() {
     const u = store.user
     const roles = u?.roles || []
     const isAdmin = roles.includes('administrator')
@@ -316,7 +324,8 @@ mountApp(root)
       if (a.dataset.page === currentPage) a.setAttribute('aria-current', 'page')
       else a.removeAttribute('aria-current')
     })
-  })
+  }
+  store.on(syncShell)
 
   function goTo(page){
     history.pushState({ page }, '', `#${page}`)
@@ -341,10 +350,9 @@ mountApp(root)
     store.set({ currentPage: page })
   })
   
-  // Set initial history state
-  const initialPage = location.hash.replace('#', '') || 'browse'
-  history.replaceState({ page: initialPage }, '', `#${initialPage}`)
-  store.set({ currentPage: initialPage })
+  // Sync the shell (title, nav, identity) to the initial state without
+  // re-rendering the page
+  syncShell()
   
   // Search wiring
   const searchInput = document.getElementById('searchInput')

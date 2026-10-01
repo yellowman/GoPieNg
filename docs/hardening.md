@@ -89,7 +89,7 @@ no symlinks). `-no-static` still permits a separate web server to serve assets.
 An explicit webroot is a startup snapshot; restart to pick up changes. Rebuild
 and redeploy the binary to update its embedded assets. Separately hosted assets
 must be upgraded with the backend. The whole module graph carries one asset
-version (`?v=17` on `styles.css`, `app.js` and every internal import;
+version (`?v=N` on `styles.css`, `app.js` and every internal import;
 `web/js/version.test.mjs` enforces it), bumped with every frontend release so
 an upgrade loads entirely new URLs. `/js/` and `/css/` therefore need no cache
 headers. `index.html` carries the version, so a web server hosting `web/` must
