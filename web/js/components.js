@@ -1,8 +1,8 @@
-import { compareAddresses } from './refresh.js?v=17'
-import { api, auth } from './api.js?v=17'
-import { store } from './store.js?v=17'
-import { el, pushToast, showWarningModal, showConfirmModal, scrollBehavior } from './util.js?v=17'
-import { icon } from './icons.js?v=17'
+import { compareAddresses } from './refresh.js?v=18'
+import { api, auth } from './api.js?v=18'
+import { store } from './store.js?v=18'
+import { el, pushToast, showWarningModal, showConfirmModal, scrollBehavior } from './util.js?v=18'
+import { icon } from './icons.js?v=18'
 
 // Track expanded nodes
 const expanded = new Set()
@@ -1685,13 +1685,20 @@ function Login(){
   wrap.appendChild(el('h1', { class: 'login-title' }, 'GoPieNg'))
   wrap.appendChild(el('p', { class: 'login-subtitle' }, 'IP Address Management'))
 
-  const form = el('div', { class: 'login-form' })
-  const userInput = el('input', { type: 'text', placeholder: 'Username', autocomplete: 'username', 'aria-label': 'Username' })
-  const passInput = el('input', { type: 'password', placeholder: 'Password', autocomplete: 'current-password', 'aria-label': 'Password' })
-  const btn = el('button', { type: 'button', class: 'btn-primary' }, 'Sign in')
+  // A real <form> lets browsers' password managers pair the fields directly
+  // instead of scanning the page for formless login inputs.
+  const form = el('form', { class: 'login-form', method: 'post', action: '#', autocomplete: 'on' })
+  const userInput = el('input', { type: 'text', name: 'username', placeholder: 'Username', autocomplete: 'username', 'aria-label': 'Username', required: true })
+  const passInput = el('input', { type: 'password', name: 'password', placeholder: 'Password', autocomplete: 'current-password', 'aria-label': 'Password', required: true })
+  const btn = el('button', { type: 'submit', class: 'btn-primary' }, 'Sign in')
   const err = el('div', { class: 'login-error hidden', role: 'alert' })
 
+  let busy = false
   const doLogin = async () => {
+    if (busy) return
+    busy = true
+    btn.disabled = true
+    btn.textContent = 'Signing in…'
     err.classList.add('hidden')
     try {
       const res = await auth.login(userInput.value, passInput.value)
@@ -1703,12 +1710,15 @@ function Login(){
     } catch(e) {
       err.textContent = e.message || 'Login failed'
       err.classList.remove('hidden')
+    } finally {
+      busy = false
+      btn.disabled = false
+      btn.textContent = 'Sign in'
     }
   }
 
-  btn.onclick = doLogin
-  userInput.onkeydown = (e) => { if (e.key === 'Enter') passInput.focus() }
-  passInput.onkeydown = (e) => { if (e.key === 'Enter') doLogin() }
+  form.onsubmit = (e) => { e.preventDefault(); doLogin() }
+  userInput.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); passInput.focus() } }
 
   form.append(userInput, passInput, btn, err)
   wrap.appendChild(form)

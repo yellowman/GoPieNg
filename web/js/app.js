@@ -1,8 +1,8 @@
-import { ChangeTracker, compareAddresses } from './refresh.js?v=17'
-import { api, auth } from './api.js?v=17'
-import { store } from './store.js?v=17'
-import { mountApp, setResetScroll } from './components.js?v=17'
-import { icon, hydrateIcons } from './icons.js?v=17'
+import { ChangeTracker, compareAddresses } from './refresh.js?v=18'
+import { api, auth } from './api.js?v=18'
+import { store } from './store.js?v=18'
+import { mountApp, setResetScroll } from './components.js?v=18'
+import { icon, hydrateIcons } from './icons.js?v=18'
 
 const root = document.getElementById('app')
 

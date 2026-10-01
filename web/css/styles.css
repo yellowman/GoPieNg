@@ -812,6 +812,9 @@ td > button, td > select { vertical-align: middle; }
   margin: 0 auto;
   padding-top: 28vh;
 }
+/* Signed out there is no sidebar: center on the whole window, not inside the
+   left-anchored 1600px work surface */
+.not-authed .surface { max-width: none; }
 .login-title {
   margin: 0;
   font-family: var(--mono);
